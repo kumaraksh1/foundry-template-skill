@@ -1,0 +1,29 @@
+{
+  "name": "keyvault",
+  "displayName": "Azure Key Vault",
+  "category": "security",
+  "description": "Secure storage for secrets, keys, and certificates",
+  "required": true,
+  "bicep": {
+    "modulePath": "modules/keyvault.bicep",
+    "parameters": ["keyVaultName"],
+    "outputs": ["keyVaultName", "keyVaultUri"]
+  },
+  "environmentVariables": [
+    "AZURE_KEY_VAULT_NAME"
+  ],
+  "dependencies": {
+    "python": ["azure-keyvault-secrets>=4.8.0", "azure-identity>=1.17.0"],
+    "typescript": ["@azure/keyvault-secrets", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Key Vault Secrets User",
+      "roleDefinitionId": "4633458b-17de-408a-b874-0445c86b69e6"
+    }
+  ],
+  "defaultConfig": {
+    "sku": "standard",
+    "enableRbacAuthorization": true
+  }
+}

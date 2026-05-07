@@ -1,0 +1,62 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2026-05-06",
+  "services": {
+    "openai": {
+      "path": "services/openai",
+      "category": "ai",
+      "required": false
+    },
+    "ai-search": {
+      "path": "services/ai-search",
+      "category": "ai",
+      "required": false
+    },
+    "ai-foundry": {
+      "path": "services/ai-foundry",
+      "category": "ai",
+      "required": false
+    },
+    "container-apps": {
+      "path": "services/container-apps",
+      "category": "compute",
+      "required": false
+    },
+    "static-web-app": {
+      "path": "services/static-web-app",
+      "category": "compute",
+      "required": false
+    },
+    "cosmos-db": {
+      "path": "services/cosmos-db",
+      "category": "database",
+      "required": false
+    },
+    "storage": {
+      "path": "services/storage",
+      "category": "storage",
+      "required": false
+    },
+    "monitoring": {
+      "path": "services/monitoring",
+      "category": "observability",
+      "required": true
+    },
+    "keyvault": {
+      "path": "services/keyvault",
+      "category": "security",
+      "required": true
+    },
+    "container-registry": {
+      "path": "services/container-registry",
+      "category": "compute",
+      "required": false
+    }
+  },
+  "scenarioDefaults": {
+    "rag-chatbot": ["openai", "ai-search", "container-apps", "storage", "container-registry", "monitoring", "keyvault"],
+    "multi-agent": ["openai", "ai-foundry", "container-apps", "storage", "container-registry", "monitoring", "keyvault"],
+    "api-backend": ["openai", "container-apps", "cosmos-db", "container-registry", "monitoring", "keyvault"],
+    "full-stack-app": ["openai", "container-apps", "static-web-app", "cosmos-db", "container-registry", "monitoring", "keyvault"]
+  }
+}

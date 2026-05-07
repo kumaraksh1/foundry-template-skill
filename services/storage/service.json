@@ -1,0 +1,29 @@
+{
+  "name": "storage",
+  "displayName": "Azure Blob Storage",
+  "category": "storage",
+  "description": "Object storage for documents, files, and unstructured data",
+  "bicep": {
+    "modulePath": "modules/storage.bicep",
+    "parameters": ["storageAccountName", "containerNames"],
+    "outputs": ["storageAccountName", "storageAccountId", "storageBlobEndpoint"]
+  },
+  "environmentVariables": [
+    "AZURE_STORAGE_ACCOUNT",
+    "AZURE_STORAGE_BLOB_ENDPOINT"
+  ],
+  "dependencies": {
+    "python": ["azure-storage-blob>=12.22.0", "azure-identity>=1.17.0"],
+    "typescript": ["@azure/storage-blob", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Storage Blob Data Contributor",
+      "roleDefinitionId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+    }
+  ],
+  "defaultConfig": {
+    "sku": "Standard_LRS",
+    "containers": ["documents"]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "monitoring",
+  "displayName": "Application Insights + Log Analytics",
+  "category": "observability",
+  "description": "Application performance monitoring, logging, and distributed tracing",
+  "required": true,
+  "bicep": {
+    "modulePath": "modules/monitoring.bicep",
+    "parameters": ["logAnalyticsName", "applicationInsightsName"],
+    "outputs": ["logAnalyticsWorkspaceId", "applicationInsightsConnectionString", "applicationInsightsName"]
+  },
+  "environmentVariables": [
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"
+  ],
+  "dependencies": {
+    "python": ["azure-monitor-opentelemetry>=1.6.0"],
+    "typescript": ["@azure/monitor-opentelemetry"]
+  },
+  "roleAssignments": [],
+  "defaultConfig": {
+    "retentionInDays": 30
+  }
+}

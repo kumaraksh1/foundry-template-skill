@@ -1,0 +1,30 @@
+{
+  "name": "openai",
+  "displayName": "Azure OpenAI Service",
+  "category": "ai",
+  "description": "GPT models for chat, completion, and embeddings",
+  "bicep": {
+    "modulePath": "modules/openai.bicep",
+    "parameters": ["openAiName", "chatModelName", "chatModelVersion", "chatDeploymentCapacity", "embeddingModelName"],
+    "outputs": ["openAiEndpoint", "openAiName", "openAiId"]
+  },
+  "environmentVariables": [
+    "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_DEPLOYMENT"
+  ],
+  "dependencies": {
+    "python": ["openai>=1.40.0", "azure-identity>=1.17.0"],
+    "typescript": ["openai", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Cognitive Services OpenAI User",
+      "roleDefinitionId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
+    }
+  ],
+  "defaultConfig": {
+    "chatModelName": "gpt-4o-mini",
+    "chatModelVersion": "2024-07-18",
+    "chatDeploymentCapacity": 30
+  }
+}

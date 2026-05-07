@@ -1,0 +1,32 @@
+{
+  "name": "cosmos-db",
+  "displayName": "Azure Cosmos DB",
+  "category": "database",
+  "description": "Multi-model NoSQL database with global distribution",
+  "bicep": {
+    "modulePath": "modules/cosmos-db.bicep",
+    "parameters": ["cosmosAccountName", "databaseName", "containerName", "partitionKeyPath"],
+    "outputs": ["cosmosEndpoint", "cosmosAccountName", "cosmosAccountId", "cosmosDatabaseName"]
+  },
+  "environmentVariables": [
+    "AZURE_COSMOS_ENDPOINT",
+    "AZURE_COSMOS_DATABASE",
+    "AZURE_COSMOS_CONTAINER"
+  ],
+  "dependencies": {
+    "python": ["azure-cosmos>=4.7.0", "azure-identity>=1.17.0"],
+    "typescript": ["@azure/cosmos", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Cosmos DB Built-in Data Contributor",
+      "roleDefinitionId": "00000000-0000-0000-0000-000000000002",
+      "note": "This is a Cosmos DB data-plane role, assigned via Cosmos DB RBAC (not ARM)"
+    }
+  ],
+  "defaultConfig": {
+    "databaseName": "app-db",
+    "containerName": "items",
+    "partitionKeyPath": "/id"
+  }
+}

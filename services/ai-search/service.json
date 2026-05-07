@@ -1,0 +1,34 @@
+{
+  "name": "ai-search",
+  "displayName": "Azure AI Search",
+  "category": "ai",
+  "description": "Full-text, vector, and semantic search over documents",
+  "bicep": {
+    "modulePath": "modules/ai-search.bicep",
+    "parameters": ["searchServiceName", "sku", "semanticSearch"],
+    "outputs": ["searchEndpoint", "searchServiceName", "searchServiceId"]
+  },
+  "environmentVariables": [
+    "AZURE_SEARCH_ENDPOINT",
+    "AZURE_SEARCH_INDEX_NAME"
+  ],
+  "dependencies": {
+    "python": ["azure-search-documents>=11.6.0", "azure-identity>=1.17.0"],
+    "typescript": ["@azure/search-documents", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Search Index Data Reader",
+      "roleDefinitionId": "1407120a-92aa-4202-b7e9-c0e197c71c8f"
+    },
+    {
+      "role": "Search Index Data Contributor",
+      "roleDefinitionId": "8bbe4f96-0a58-44db-83e2-9bef5f0ffac5"
+    }
+  ],
+  "defaultConfig": {
+    "sku": "basic",
+    "semanticSearch": true,
+    "indexName": "documents"
+  }
+}
