@@ -2,79 +2,154 @@
 
 A GitHub Copilot Skill that generates complete, deployable Azure AI solution templates from natural language descriptions.
 
-## What This Does
+## Quick Start
 
-You describe what you want to build. Copilot asks clarifying questions. Then it generates a **complete repo** — Bicep infrastructure, app code, CI/CD, docs — that deploys with `azd up`.
+### 1. Invoke the Skill
 
-## Usage
+**VS Code Chat (recommended):**
+Open Copilot Chat (Ctrl+Shift+I) and type your prompt:
+```
+Create a Linux App Service to show weather on UI and use redis as a sidecar to cache the api calls
+```
 
-1. Add this repo as a Copilot skill in VS Code
-2. Describe your project:
-   ```
-   Build an HR policy chatbot that answers questions from uploaded PDF handbooks
-   using Azure OpenAI and AI Search, deployed to Container Apps
-   ```
-3. Answer Copilot's clarifying questions
-4. Get a complete, deployable template repo
-5. Run `azd up` to deploy
+**Copilot CLI (interactive):**
+```bash
+copilot chat
+```
+Then type your prompt at the `>` prompt. The skill auto-matches based on your description.
 
-## What Gets Generated
+**Copilot CLI (one-shot):**
+```bash
+echo "Build an HR policy chatbot using Azure OpenAI and AI Search" | copilot chat
+```
+
+### 2. Answer Clarifying Questions
+
+The skill asks batched questions about scenario type, backend language, AI model, deployment target, etc. Answer them or accept the defaults.
+
+### 3. Template Gets Generated
+
+Copilot generates all files into a new directory:
 
 ```
 your-template/
-├── azure.yaml              # azd deployment config + hooks
+├── azure.yaml
+├── .gitattributes
+├── .devcontainer/devcontainer.json
 ├── infra/
-│   ├── main.bicep          # Infrastructure orchestrator
+│   ├── main.bicep
 │   ├── main.parameters.json
-│   └── modules/            # Per-service Bicep modules
+│   └── core/
 ├── src/
-│   ├── api/                # Backend (Python/TypeScript)
-│   ├── frontend/           # UI (React, or omitted if API-only)
-│   └── Dockerfile
+│   ├── api/
+│   ├── frontend/
+│   ├── Dockerfile
+│   └── gunicorn.conf.py
 ├── scripts/
-│   ├── preprovision.sh     # Pre-deploy validation
-│   └── postprovision.sh    # Post-deploy setup
+│   ├── validate_env_vars.sh / .ps1
+│   └── postdeploy.sh / .ps1
 ├── docs/
-│   ├── deployment.md
-│   ├── architecture.md
-│   ├── troubleshooting.md
-│   └── local_development.md
 ├── .github/workflows/
-│   ├── ci.yml
-│   └── deploy.yml
 ├── tests/
 ├── README.md
 ├── SECURITY.md
 └── LICENSE
 ```
 
-## Repo Structure (This Repo)
+### 4. Open in Dev Container
+
+```bash
+cd your-template
+code .
+```
+
+When VS Code opens, click **"Reopen in Container"** (or use `Dev Containers: Reopen in Container` from the command palette). The devcontainer installs:
+- Azure Developer CLI (`azd`)
+- Azure CLI (`az`)
+- Python 3.11+ (or Node.js for TypeScript templates)
+- GitHub CLI
+
+### 5. Deploy
+
+Inside the devcontainer terminal:
+
+```bash
+# Authenticate
+azd auth login
+
+# Deploy everything (infra + app)
+azd up
+```
+
+Follow the prompts to select subscription and region. The `preup` hook validates environment variables, then `azd` provisions infrastructure and deploys the app.
+
+### 6. Verify
+
+After deployment completes:
+- The `postdeploy` hook prints the app URL and next steps
+- Open the URL in your browser
+- Try the sample prompts in `docs/sample_questions.md`
+
+### 7. Clean Up
+
+```bash
+azd down
+```
+
+---
+
+## Alternative: GitHub Codespaces
+
+Click the Codespaces badge in the generated template's README, then run `azd auth login && azd up` — no local setup needed.
+
+---
+
+## Skill Setup (for first-time users)
+
+The skill must be available in `~/.copilot/skills/`:
 
 ```
-├── SKILL.md                # Core skill instructions for Copilot
-├── references/             # Architecture patterns & code recipes
-│   ├── rag-chatbot.md
-│   ├── multi-agent.md
-│   ├── api-backend.md
-│   └── ...
-├── services/               # Azure service catalog (structured)
-│   ├── registry.json
-│   └── <service>/service.json
-└── examples/               # Validated reference outputs
+~/.copilot/skills/foundry-template-generator/
+├── SKILL.md
+├── references/
+└── services/
 ```
+
+If using [skill-sync](https://github.com/your-org/skill-sync), add the source repo and run:
+```bash
+copilot chat
+> sync skills
+```
+
+Or manually symlink:
+```powershell
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.copilot\skills\foundry-template-generator" -Target "path\to\foundry-template-skill"
+```
+
+---
 
 ## Supported Scenarios
 
-| Scenario | Description |
-|----------|-------------|
-| RAG Chatbot | Document Q&A with Azure OpenAI + AI Search |
-| Multi-Agent | Multiple Foundry agents with orchestration |
-| API Backend | REST API with database and AI integration |
-| Full-Stack Web App | Frontend + backend + AI services |
+| Scenario | Description | Reference |
+|----------|-------------|-----------|
+| RAG Chatbot | Document Q&A with Azure OpenAI + AI Search | `references/rag-chatbot.md` |
+| Multi-Agent | Multiple Foundry agents with orchestration | `references/multi-agent.md` |
+| API Backend | REST API with database and AI integration | `references/api-backend.md` |
+| Full-Stack Web App | Frontend + backend + AI services | `references/full-stack-app.md` |
 
-## How It Works
+## Repo Structure
 
-1. **SKILL.md** tells Copilot how to gather requirements and generate files
-2. **references/** provides architecture patterns and proven code recipes for each scenario type
-3. **services/** provides structured metadata about Azure services (Bicep, dependencies, env vars)
-4. Copilot combines these to produce a complete, consistent template
+```
+├── SKILL.md              # Core skill instructions for Copilot
+├── references/           # Architecture patterns & code recipes
+│   ├── rag-chatbot.md
+│   ├── multi-agent.md
+│   ├── api-backend.md
+│   ├── full-stack-app.md
+│   ├── bicep-patterns.md
+│   └── azure-yaml-patterns.md
+├── services/             # Azure service catalog
+│   ├── registry.json
+│   └── <service>/service.json
+└── README.md             # This file
+```
