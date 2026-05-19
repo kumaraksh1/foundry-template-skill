@@ -1,0 +1,123 @@
+{
+  "name": "ai-foundry",
+  "displayName": "Azure AI Foundry (AI Services + Project)",
+  "category": "ai",
+  "description": "Modern AI Services account with project management, Foundry connections, and model deployments. Uses kind: AIServices with allowProjectManagement: true and child project resource. This is the recommended pattern for all new AI templates — replaces standalone Azure OpenAI.",
+  "bicep": {
+    "modulePath": "core/host/ai-environment.bicep",
+    "compositionModule": true,
+    "subModules": [
+      "core/ai/cognitiveservices.bicep",
+      "core/storage/storage-account.bicep",
+      "core/monitor/loganalytics.bicep",
+      "core/monitor/applicationinsights.bicep",
+      "core/search/search-services.bicep",
+      "core/security/role.bicep"
+    ],
+    "parameters": [
+      "aiServicesName",
+      "aiProjectName",
+      "storageAccountName",
+      "logAnalyticsName",
+      "applicationInsightsName",
+      "searchServiceName",
+      "aiServiceModelDeployments",
+      "appInsightConnectionName",
+      "runnerPrincipalId",
+      "runnerPrincipalType"
+    ],
+    "outputs": [
+      "projectResourceId",
+      "aiProjectEndpoint",
+      "aiServicesName",
+      "aiServiceEndpoint",
+      "storageAccountName",
+      "applicationInsightsName",
+      "logAnalyticsWorkspaceName",
+      "searchServiceEndpoint",
+      "searchServiceName"
+    ]
+  },
+  "environmentVariables": [
+    "AZURE_EXISTING_AIPROJECT_RESOURCE_ID",
+    "AZURE_EXISTING_AIPROJECT_ENDPOINT"
+  ],
+  "dependencies": {
+    "python": ["azure-ai-projects>=1.0.0", "azure-identity>=1.17.0", "azure-ai-inference>=1.0.0"],
+    "typescript": ["@azure/ai-projects", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Azure AI Developer",
+      "roleDefinitionId": "64702f94-c441-49e6-a78b-ef80e0188fee",
+      "assignTo": ["user", "backend"]
+    },
+    {
+      "role": "Cognitive Services User",
+      "roleDefinitionId": "a97b65f3-24c7-4388-baec-2e87135dc908",
+      "assignTo": ["user", "backend"]
+    },
+    {
+      "role": "Azure AI User",
+      "roleDefinitionId": "53ca6127-db72-4b80-b1b0-d745d6d5456d",
+      "assignTo": ["user"]
+    },
+    {
+      "role": "Storage Blob Data Contributor",
+      "roleDefinitionId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+      "assignTo": ["aiServiceIdentity", "user"],
+      "note": "AI Services system identity needs blob access for project storage"
+    }
+  ],
+  "keyPatterns": {
+    "existingResourceSupport": true,
+    "existingResourceParam": "azureExistingAIProjectResourceId",
+    "existingEndpointConstruction": "format('https://{0}.services.ai.azure.com/api/projects/{1}', split(resourceId, '/')[8], split(resourceId, '/')[10])",
+    "systemAssignedIdentity": true,
+    "connections": ["AppInsights", "AzureStorageAccount"]
+  },
+  "cognitiveServicesPattern": {
+    "apiVersion": "2025-04-01-preview",
+    "kind": "AIServices",
+    "sku": "S0",
+    "properties": {
+      "allowProjectManagement": true,
+      "disableLocalAuth": true
+    },
+    "childResources": [
+      {
+        "type": "connections",
+        "apiVersion": "2025-04-01-preview",
+        "categories": ["AppInsights", "AzureStorageAccount"]
+      },
+      {
+        "type": "projects",
+        "apiVersion": "2025-04-01-preview",
+        "identityType": "SystemAssigned"
+      },
+      {
+        "type": "deployments",
+        "apiVersion": "2024-10-01",
+        "batchSize": 1
+      }
+    ]
+  },
+  "defaultConfig": {
+    "chatModelName": "gpt-4o-mini",
+    "chatModelVersion": "2024-07-18",
+    "chatDeploymentSku": "GlobalStandard",
+    "chatDeploymentCapacity": 30,
+    "embedModelName": "text-embedding-3-small",
+    "embedModelVersion": "1",
+    "embedDeploymentSku": "Standard",
+    "embedDeploymentCapacity": 30,
+    "embeddingDimensions": "100"
+  },
+  "notes": [
+    "Use this instead of standalone openai service for new Foundry-based templates",
+    "The ai-environment.bicep is a composition module that creates Storage + Monitoring + AI Services + Project + Search (conditional)",
+    "Always support 'bring your own project' via azureExistingAIProjectResourceId param",
+    "When existing project is used, skip AI environment creation but still create Log Analytics for Container Apps",
+    "Model deployments array supports both chat and embedding models conditionally"
+  ]
+}

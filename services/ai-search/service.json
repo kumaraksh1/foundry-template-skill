@@ -23,7 +23,11 @@
     },
     {
       "role": "Search Index Data Contributor",
-      "roleDefinitionId": "8bbe4f96-0a58-44db-83e2-9bef5f0ffac5"
+      "roleDefinitionId": "8ebe5a00-799e-43f5-93ac-243d3dce84a7"
+    },
+    {
+      "role": "Search Service Contributor",
+      "roleDefinitionId": "7ca78c08-252a-4471-8644-bb5ff32d4ba0"
     }
   ],
   "defaultConfig": {

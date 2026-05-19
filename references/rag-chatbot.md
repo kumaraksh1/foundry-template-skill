@@ -8,8 +8,10 @@ User wants: document Q&A, knowledge base, chat with data, PDF/document search, r
 ```mermaid
 graph LR
     User[User] --> Frontend[React Chat UI]
-    Frontend --> API[Python API / Container App]
-    API --> OpenAI[Azure OpenAI]
+    Frontend --> API[FastAPI / Container App]
+    API --> AIProject[AI Foundry Project]
+    AIProject --> ChatModel[Chat Model via Inference SDK]
+    AIProject --> EmbedModel[Embeddings Model]
     API --> Search[Azure AI Search]
     Search --> Storage[Blob Storage / Documents]
     API --> AppInsights[Application Insights]
@@ -17,15 +19,17 @@ graph LR
 
 ## Azure Services Required
 
-| Service | Purpose | Bicep Module |
-|---------|---------|-------------|
-| Azure Container Apps | Host the API | `modules/container-apps.bicep` |
-| Azure OpenAI | Chat completion + embeddings | `modules/openai.bicep` |
-| Azure AI Search | Vector + semantic search | `modules/ai-search.bicep` |
-| Azure Blob Storage | Store source documents | `modules/storage.bicep` |
-| Application Insights | Monitoring + tracing | `modules/monitoring.bicep` |
-| Container Registry | Store Docker images | `modules/container-registry.bicep` |
-| Key Vault | Managed secrets | `modules/keyvault.bicep` |
+| Service | Purpose | Module |
+|---------|---------|--------|
+| Azure AI Foundry | AI Services + Project + Models | `core/host/ai-environment.bicep` |
+| Azure Container Apps | Host the API + frontend | `core/host/container-apps.bicep` |
+| Azure AI Search | Vector + semantic search (conditional) | `core/search/search-services.bicep` |
+| Azure Blob Storage | Store source documents | `core/storage/storage-account.bicep` |
+| Application Insights | Monitoring + tracing | `core/monitor/applicationinsights.bicep` |
+| Container Registry | Store Docker images | (bundled in container-apps module) |
+| Log Analytics | Log aggregation | `core/monitor/loganalytics.bicep` |
+
+**Note:** Key Vault is NOT required — this pattern uses Managed Identity exclusively.
 
 ## App Code Structure (Python)
 
@@ -33,207 +37,358 @@ graph LR
 src/
 ├── api/
 │   ├── __init__.py
-│   ├── app.py                  # Quart app with CORS
-│   ├── config.py               # Load env vars
-│   ├── routes/
-│   │   ├── __init__.py
-│   │   ├── chat.py             # POST /chat — main chat endpoint
-│   │   └── health.py           # GET /health
-│   └── services/
-│       ├── __init__.py
-│       ├── search_service.py   # Azure AI Search client
-│       └── openai_service.py   # Azure OpenAI client
+│   ├── main.py                 # FastAPI app factory + lifespan (creates clients)
+│   ├── routes.py               # Chat endpoint + health + UI serving
+│   ├── search_index_manager.py # Azure AI Search client + index management
+│   ├── util.py                 # Logger, ChatRequest model
+│   ├── data/                   # Sample data + embeddings for RAG
+│   │   └── embeddings.csv
+│   ├── static/                 # Built React frontend assets
+│   └── templates/              # Jinja2 templates (index.html shell)
+├── frontend/                   # React chat UI (built into static/ during Docker build)
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.ts
 ├── Dockerfile
 ├── requirements.txt
-└── gunicorn.conf.py
+├── gunicorn.conf.py            # Gunicorn config with on_starting hook for index creation
+└── __init__.py
 ```
 
 ## Key Code Patterns
 
-### Chat endpoint (`routes/chat.py`)
+### App factory with lifespan (`api/main.py`)
+
+The lifespan pattern creates Azure clients on startup and stores them in `app.state`:
+
 ```python
-from quart import Blueprint, request, jsonify
-from services.search_service import search_documents
-from services.openai_service import generate_response
-
-chat_bp = Blueprint("chat", __name__)
-
-@chat_bp.route("/chat", methods=["POST"])
-async def chat():
-    data = await request.get_json()
-    user_message = data.get("message", "")
-    
-    # 1. Retrieve relevant documents
-    search_results = await search_documents(user_message)
-    
-    # 2. Build context from search results
-    context = "\n\n".join([doc["content"] for doc in search_results])
-    
-    # 3. Generate response with context
-    response = await generate_response(user_message, context)
-    
-    return jsonify({
-        "message": response["content"],
-        "citations": [{"title": doc["title"], "url": doc["url"]} for doc in search_results]
-    })
-```
-
-### Search service (`services/search_service.py`)
-```python
-from azure.identity import DefaultAzureCredential
-from azure.search.documents.aio import SearchClient
-from config import settings
-
-credential = DefaultAzureCredential()
-
-async def search_documents(query: str, top: int = 5) -> list[dict]:
-    async with SearchClient(
-        endpoint=settings.search_endpoint,
-        index_name=settings.search_index_name,
-        credential=credential,
-    ) as client:
-        results = await client.search(
-            search_text=query,
-            query_type="semantic",
-            semantic_configuration_name="default",
-            top=top,
-            select=["title", "content", "url"],
-        )
-        return [doc async for doc in results]
-```
-
-### OpenAI service (`services/openai_service.py`)
-```python
-from azure.identity import DefaultAzureCredential
-from openai import AsyncAzureOpenAI
-from config import settings
-
-credential = DefaultAzureCredential()
-
-async def generate_response(user_message: str, context: str) -> dict:
-    client = AsyncAzureOpenAI(
-        azure_endpoint=settings.openai_endpoint,
-        azure_ad_token_provider=credential.get_token,
-        api_version="2024-12-01-preview",
-    )
-    
-    response = await client.chat.completions.create(
-        model=settings.openai_deployment,
-        messages=[
-            {"role": "system", "content": f"Answer based on this context:\n\n{context}\n\nIf the answer is not in the context, say so."},
-            {"role": "user", "content": user_message}
-        ],
-        temperature=0.7,
-        max_tokens=1024,
-    )
-    
-    return {"content": response.choices[0].message.content}
-```
-
-### Config (`config.py`)
-```python
+import contextlib
 import os
-from dataclasses import dataclass
+from typing import Union
+from urllib.parse import urlparse
 
-@dataclass
-class Settings:
-    # Azure OpenAI
-    openai_endpoint: str = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
-    openai_deployment: str = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
-    
-    # Azure AI Search  
-    search_endpoint: str = os.environ.get("AZURE_SEARCH_ENDPOINT", "")
-    search_index_name: str = os.environ.get("AZURE_SEARCH_INDEX_NAME", "documents")
-    
-    # App config
-    app_port: int = int(os.environ.get("PORT", "8000"))
+import fastapi
+from azure.ai.projects.aio import AIProjectClient
+from azure.ai.inference.aio import ChatCompletionsClient, EmbeddingsClient
+from azure.identity import AzureDeveloperCliCredential, ManagedIdentityCredential
+from dotenv import load_dotenv
+from fastapi.staticfiles import StaticFiles
 
-settings = Settings()
+from .search_index_manager import SearchIndexManager
+
+@contextlib.asynccontextmanager
+async def lifespan(app: fastapi.FastAPI):
+    # Choose credential based on environment
+    if not os.getenv("RUNNING_IN_PRODUCTION"):
+        tenant_id = os.getenv("AZURE_TENANT_ID")
+        azure_credential = AzureDeveloperCliCredential(tenant_id=tenant_id) if tenant_id else AzureDeveloperCliCredential()
+    else:
+        # User-assigned managed identity (client_id set in api.bicep)
+        azure_credential = ManagedIdentityCredential(client_id=os.getenv("AZURE_CLIENT_ID"))
+
+    # Connect to AI Foundry Project
+    endpoint = os.environ["AZURE_EXISTING_AIPROJECT_ENDPOINT"]
+    project = AIProjectClient(credential=azure_credential, endpoint=endpoint)
+
+    # Derive inference endpoint from project endpoint
+    # Project:   https://<account>.services.ai.azure.com/api/projects/<project>
+    # Inference: https://<account>.services.ai.azure.com/models
+    inference_endpoint = f"https://{urlparse(endpoint).netloc}/models"
+
+    chat = ChatCompletionsClient(
+        endpoint=inference_endpoint,
+        credential=azure_credential,
+        credential_scopes=["https://ai.azure.com/.default"],
+    )
+    embed = EmbeddingsClient(
+        endpoint=inference_endpoint,
+        credential=azure_credential,
+        credential_scopes=["https://ai.azure.com/.default"],
+    )
+
+    # Set up RAG search (conditional)
+    search_index_manager = None
+    search_endpoint = os.environ.get("AZURE_AI_SEARCH_ENDPOINT")
+    if search_endpoint and os.getenv("AZURE_AI_SEARCH_INDEX_NAME") and os.getenv("AZURE_AI_EMBED_DEPLOYMENT_NAME"):
+        embed_dimensions = int(os.getenv("AZURE_AI_EMBED_DIMENSIONS", "100"))
+        search_index_manager = SearchIndexManager(
+            endpoint=search_endpoint,
+            credential=azure_credential,
+            index_name=os.getenv("AZURE_AI_SEARCH_INDEX_NAME"),
+            dimensions=embed_dimensions,
+            model=os.getenv("AZURE_AI_EMBED_DEPLOYMENT_NAME"),
+            embeddings_client=embed,
+        )
+        await search_index_manager.ensure_index_created(vector_index_dimensions=embed_dimensions)
+
+    # Store clients in app state for dependency injection
+    app.state.chat = chat
+    app.state.search_index_manager = search_index_manager
+    app.state.chat_model = os.environ["AZURE_AI_CHAT_DEPLOYMENT_NAME"]
+    yield
+
+    await project.close()
+    await chat.close()
+    if search_index_manager:
+        await search_index_manager.close()
+
+
+def create_app():
+    if not os.getenv("RUNNING_IN_PRODUCTION"):
+        load_dotenv(override=True)
+
+    app = fastapi.FastAPI(lifespan=lifespan)
+    app.mount("/static", StaticFiles(directory="api/static"), name="static")
+
+    from . import routes
+    app.include_router(routes.router)
+    return app
 ```
 
-### Dockerfile
+### Chat endpoint with SSE streaming (`api/routes.py`)
+
+```python
+import json
+import fastapi
+from fastapi import Request, Depends
+from fastapi.responses import StreamingResponse
+from azure.ai.inference.aio import ChatCompletionsClient
+from azure.ai.inference.prompts import PromptTemplate
+
+from .search_index_manager import SearchIndexManager
+from .util import ChatRequest
+
+router = fastapi.APIRouter()
+
+def get_chat_client(request: Request) -> ChatCompletionsClient:
+    return request.app.state.chat
+
+def get_chat_model(request: Request) -> str:
+    return request.app.state.chat_model
+
+def get_search_index_manager(request: Request) -> SearchIndexManager:
+    return request.app.state.search_index_manager
+
+@router.post("/chat")
+async def chat_stream_handler(
+    chat_request: ChatRequest,
+    chat_client: ChatCompletionsClient = Depends(get_chat_client),
+    model_deployment_name: str = Depends(get_chat_model),
+    search_index_manager: SearchIndexManager = Depends(get_search_index_manager),
+) -> StreamingResponse:
+
+    async def response_stream():
+        messages = [{"role": m.role, "content": m.content} for m in chat_request.messages]
+
+        # Build system prompt — with RAG context if available
+        if search_index_manager:
+            context = await search_index_manager.search(chat_request)
+            if context:
+                prompt_messages = PromptTemplate.from_string(
+                    "You are a helpful assistant. Answer using this context:\n\n{{context}}"
+                ).create_messages(data=dict(context=context))
+            else:
+                prompt_messages = PromptTemplate.from_string("You are a helpful assistant.").create_messages()
+        else:
+            prompt_messages = PromptTemplate.from_string("You are a helpful assistant.").create_messages()
+
+        chat_coroutine = await chat_client.complete(
+            model=model_deployment_name,
+            messages=prompt_messages + messages,
+            stream=True,
+        )
+        async for event in chat_coroutine:
+            if event.choices and event.choices[0].delta.content:
+                yield f"data: {json.dumps({'content': event.choices[0].delta.content, 'type': 'message'})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'stream_end'})}\n\n"
+
+    return StreamingResponse(response_stream(), headers={
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "text/event-stream",
+    })
+
+@router.get("/health")
+async def health():
+    return {"status": "healthy"}
+```
+
+### Credential pattern summary
+
+| Environment | Credential | How it's set |
+|---|---|---|
+| Local development | `AzureDeveloperCliCredential` (with optional `tenant_id`) | Developer runs `azd auth login` |
+| Production (Container App) | `ManagedIdentityCredential(client_id=...)` | `AZURE_CLIENT_ID` set in api.bicep env vars |
+| Gunicorn startup hook | `DefaultAzureCredential` (async) | For one-shot operations like index creation |
+
+### Gunicorn config (`gunicorn.conf.py`)
+
+```python
+import asyncio
+import os
+from azure.identity.aio import DefaultAzureCredential
+
+async def create_index_maybe():
+    """Create search index and upload documents on first startup."""
+    from api.search_index_manager import SearchIndexManager
+    async with DefaultAzureCredential() as creds:
+        endpoint = os.environ.get("AZURE_AI_SEARCH_ENDPOINT")
+        if endpoint and os.getenv("AZURE_AI_SEARCH_INDEX_NAME"):
+            search_mgr = SearchIndexManager(
+                endpoint=endpoint,
+                credential=creds,
+                index_name=os.getenv("AZURE_AI_SEARCH_INDEX_NAME"),
+                dimensions=None,
+                model=os.getenv("AZURE_AI_EMBED_DEPLOYMENT_NAME"),
+                embeddings_client=None,
+            )
+            if await search_mgr.create_index(
+                vector_index_dimensions=int(os.getenv("AZURE_AI_EMBED_DIMENSIONS", "100"))
+            ):
+                embeddings_path = os.path.join(os.path.dirname(__file__), "api", "data", "embeddings.csv")
+                await search_mgr.upload_documents(embeddings_path)
+                await search_mgr.close()
+
+def on_starting(server):
+    asyncio.get_event_loop().run_until_complete(create_index_maybe())
+
+max_requests = 1000
+max_requests_jitter = 50
+log_file = "-"
+bind = "0.0.0.0:50505"
+
+if not os.getenv("RUNNING_IN_PRODUCTION"):
+    reload = True
+```
+
+### Dockerfile (Python + React in one container)
+
 ```dockerfile
-FROM python:3.11-slim AS base
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+FROM python:3.13-slim-bookworm
+WORKDIR /code
 COPY . .
-EXPOSE 8000
-CMD ["gunicorn", "api.app:app", "-c", "gunicorn.conf.py"]
+
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+
+# Install Node.js and pnpm, build frontend
+RUN apt-get update && apt-get install -y curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs && npm install -g pnpm@10.6.0
+
+WORKDIR /code/frontend
+RUN pnpm install --frozen-lockfile=false && pnpm build && rm -rf node_modules
+
+WORKDIR /code
+EXPOSE 50505
+CMD ["gunicorn", "api.main:create_app"]
 ```
 
 ### requirements.txt
+
 ```
-quart>=0.19.0
-azure-identity>=1.17.0
+fastapi>=0.121.0
+uvicorn[standard]>=0.29.0
+gunicorn>=23.0.0
+azure-identity>=1.19.0
+azure-ai-projects>=1.0.0
+azure-ai-inference>=1.0.0
 azure-search-documents>=11.6.0
-openai>=1.40.0
+azure-core>=1.34.0
+azure-core-tracing-opentelemetry
 azure-monitor-opentelemetry>=1.6.0
-gunicorn>=22.0.0
-hypercorn>=0.17.0
+opentelemetry-sdk
+jinja2
+python-dotenv
 ```
 
+### Environment variables (set by api.bicep)
+
+| Variable | Source | Purpose |
+|----------|--------|---------|
+| `AZURE_CLIENT_ID` | Managed identity clientId | Auth in production |
+| `AZURE_EXISTING_AIPROJECT_ENDPOINT` | AI Project endpoint output | Connect to Foundry |
+| `AZURE_AI_CHAT_DEPLOYMENT_NAME` | Bicep param | Chat model name |
+| `AZURE_AI_EMBED_DEPLOYMENT_NAME` | Bicep param | Embeddings model (if RAG) |
+| `AZURE_AI_EMBED_DIMENSIONS` | Bicep param | Embedding vector size |
+| `AZURE_AI_SEARCH_ENDPOINT` | Search service endpoint | RAG search (if enabled) |
+| `AZURE_AI_SEARCH_INDEX_NAME` | Bicep param | Search index name (if RAG) |
+| `RUNNING_IN_PRODUCTION` | `'true'` | Switch credential type |
+| `ENABLE_AZURE_MONITOR_TRACING` | Bicep param | Enable/disable tracing |
+
 ## azure.yaml for this pattern
+
 ```yaml
 name: <project-slug>
 metadata:
   template: <project-slug>@1.0.0
 
+requiredVersions:
+  azd: ">=1.18.0"
+
 hooks:
-  preprovision:
+  preup:
     posix:
       shell: sh
-      run: chmod +x ./scripts/preprovision.sh && ./scripts/preprovision.sh
+      run: chmod u+r+x ./scripts/validate_env_vars.sh 2>/dev/null || true; ./scripts/validate_env_vars.sh
       interactive: true
       continueOnError: false
     windows:
       shell: pwsh
-      run: ./scripts/preprovision.ps1
+      run: ./scripts/validate_env_vars.ps1
       interactive: true
       continueOnError: false
-  postprovision:
+  postdeploy:
     posix:
       shell: sh
-      run: chmod +x ./scripts/postprovision.sh && ./scripts/postprovision.sh
+      run: chmod u+r+x ./scripts/postdeploy.sh 2>/dev/null || true; ./scripts/postdeploy.sh
       interactive: true
       continueOnError: true
     windows:
       shell: pwsh
-      run: ./scripts/postprovision.ps1
+      run: ./scripts/postdeploy.ps1
       interactive: true
       continueOnError: true
 
 services:
-  api:
+  api_and_frontend:
     project: ./src
     language: py
     host: containerapp
     docker:
-      image: api
+      image: api_and_frontend
       remoteBuild: true
+
+pipeline:
+  variables:
+    - AZURE_RESOURCE_GROUP
+    - AZURE_EXISTING_AIPROJECT_RESOURCE_ID
+    - AZURE_AI_CHAT_DEPLOYMENT_NAME
+    - AZURE_AI_EMBED_DEPLOYMENT_NAME
+    - AZURE_AI_EMBED_DIMENSIONS
+    - USE_SEARCH_SERVICE
 ```
 
 ## Bicep Specifics
 
 The `infra/main.bicep` for a RAG chatbot MUST create:
 1. Resource group
-2. Container Apps Environment
-3. Container App (the API)
-4. Container Registry
-5. Azure OpenAI with model deployment (chat + embeddings)
-6. Azure AI Search (Basic tier minimum for semantic search)
-7. Storage Account with blob container for documents
-8. Application Insights + Log Analytics
-9. Key Vault
-10. Managed Identity with role assignments:
-    - `Cognitive Services OpenAI User` on OpenAI resource
-    - `Search Index Data Reader` on AI Search resource
-    - `Storage Blob Data Reader` on Storage Account
+2. AI Foundry environment (via `core/host/ai-environment.bicep`): Storage + Monitoring + AI Services + Project + Connections + Model deployments
+3. Container Apps Environment + Container App + Container Registry
+4. Azure AI Search (conditional, `useSearchService` flag)
+5. User-assigned managed identity for the Container App
+6. Role assignments for BOTH user AND backend identity:
+   - `Azure AI Developer` (64702f94)
+   - `Cognitive Services User` (a97b65f3)
+   - `Azure AI User` (53ca6127) — user only
+   - `Search Index Data Contributor` (8ebe5a00) — if search enabled
+   - `Search Index Data Reader` (1407120a) — if search enabled
+   - `Search Service Contributor` (7ca78c08) — if search enabled
+7. AppInsights Monitoring Metrics Contributor scoped to the backend identity
+8. Support "bring your own existing project" via `azureExistingAIProjectResourceId`
 
-## Postprovision Script
+## Postdeploy Script
 
-The postprovision script should:
-1. Upload sample documents to blob storage (if sample data exists)
-2. Create/update the search index with vector configuration
-3. Run an initial indexer to populate the search index
-4. Print the deployed app URL
+1. Print the deployed app URL
+2. Print sample questions to try
+3. Optionally print Foundry project URL for tracing

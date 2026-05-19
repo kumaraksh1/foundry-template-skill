@@ -43,7 +43,7 @@ hooks:
   preup:
     posix:
       shell: sh
-      run: chmod u+r+x ./scripts/validate_env_vars.sh; ./scripts/validate_env_vars.sh
+      run: chmod u+r+x ./scripts/validate_env_vars.sh 2>/dev/null || true; ./scripts/validate_env_vars.sh
       interactive: true
       continueOnError: false
     windows:
@@ -54,7 +54,7 @@ hooks:
   postdeploy:
     posix:
       shell: sh
-      run: chmod u+r+x ./scripts/postdeploy.sh; ./scripts/postdeploy.sh
+      run: chmod u+r+x ./scripts/postdeploy.sh 2>/dev/null || true; ./scripts/postdeploy.sh
       interactive: true
       continueOnError: true
     windows:

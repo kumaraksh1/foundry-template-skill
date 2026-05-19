@@ -1,19 +1,21 @@
 {
-  "version": "1.0.0",
-  "lastUpdated": "2026-05-06",
+  "version": "1.1.0",
+  "lastUpdated": "2026-05-19",
   "services": {
+    "ai-foundry": {
+      "path": "services/ai-foundry",
+      "category": "ai",
+      "required": false,
+      "note": "Preferred over standalone openai for new templates. Includes AI Services + Project + Connections."
+    },
     "openai": {
       "path": "services/openai",
       "category": "ai",
-      "required": false
+      "required": false,
+      "note": "Standalone Azure OpenAI (kind: OpenAI). Use ai-foundry instead for Foundry-based templates."
     },
     "ai-search": {
       "path": "services/ai-search",
-      "category": "ai",
-      "required": false
-    },
-    "ai-foundry": {
-      "path": "services/ai-foundry",
       "category": "ai",
       "required": false
     },
@@ -35,7 +37,8 @@
     "storage": {
       "path": "services/storage",
       "category": "storage",
-      "required": false
+      "required": false,
+      "note": "Bundled inside ai-foundry module when using Foundry. Add separately for standalone blob scenarios."
     },
     "monitoring": {
       "path": "services/monitoring",
@@ -45,18 +48,30 @@
     "keyvault": {
       "path": "services/keyvault",
       "category": "security",
-      "required": true
+      "required": false,
+      "note": "Only include when explicit secret storage is needed. Many templates use Managed Identity only."
     },
     "container-registry": {
       "path": "services/container-registry",
       "category": "compute",
-      "required": false
+      "required": false,
+      "note": "Required when using Container Apps with docker remoteBuild. Bundled in container-apps module."
     }
   },
   "scenarioDefaults": {
-    "rag-chatbot": ["openai", "ai-search", "container-apps", "storage", "container-registry", "monitoring", "keyvault"],
-    "multi-agent": ["openai", "ai-foundry", "container-apps", "storage", "container-registry", "monitoring", "keyvault"],
-    "api-backend": ["openai", "container-apps", "cosmos-db", "container-registry", "monitoring", "keyvault"],
-    "full-stack-app": ["openai", "container-apps", "static-web-app", "cosmos-db", "container-registry", "monitoring", "keyvault"]
+    "rag-chatbot": ["ai-foundry", "ai-search", "container-apps", "container-registry", "monitoring"],
+    "multi-agent": ["ai-foundry", "container-apps", "container-registry", "monitoring"],
+    "api-backend": ["ai-foundry", "container-apps", "container-registry", "monitoring"],
+    "full-stack-app": ["ai-foundry", "container-apps", "static-web-app", "container-registry", "monitoring"],
+    "data-pipeline": ["ai-foundry", "storage", "cosmos-db", "monitoring"],
+    "simple-chat": ["ai-foundry", "container-apps", "container-registry", "monitoring"]
+  },
+  "scenarioNotes": {
+    "rag-chatbot": "ai-foundry module handles storage internally; ai-search is conditional (useSearchService flag)",
+    "multi-agent": "ai-foundry includes storage + models; add cosmos-db if conversation history needed",
+    "api-backend": "Add cosmos-db or storage depending on persistence needs",
+    "full-stack-app": "Frontend served from Static Web App or bundled in Container App",
+    "data-pipeline": "No container apps needed — uses batch processing or Functions",
+    "simple-chat": "Minimal template — just AI + hosting + monitoring"
   }
 }

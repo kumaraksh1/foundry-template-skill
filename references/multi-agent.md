@@ -8,30 +8,32 @@ User wants: multiple specialized AI agents, orchestration, agent coordination, c
 ```mermaid
 graph TB
     User[User] --> Frontend[React UI]
-    Frontend --> Orchestrator[Orchestrator API]
-    Orchestrator --> Agent1[Agent: Specialist 1]
-    Orchestrator --> Agent2[Agent: Specialist 2]
-    Orchestrator --> Agent3[Agent: Specialist 3]
-    Agent1 --> OpenAI[Azure OpenAI]
-    Agent2 --> OpenAI
-    Agent3 --> OpenAI
-    Agent1 --> Tools1[Tools/Data]
-    Agent2 --> Tools2[Tools/Data]
-    Agent3 --> Tools3[Tools/Data]
-    Orchestrator --> AppInsights[Application Insights]
+    Frontend --> API[FastAPI Orchestrator / Container App]
+    API --> ProjectClient[AIProjectClient]
+    ProjectClient --> Agent1[Agent: Specialist 1]
+    ProjectClient --> Agent2[Agent: Specialist 2]
+    ProjectClient --> Agent3[Agent: Specialist 3]
+    Agent1 --> Model[Azure AI Model Deployments]
+    Agent2 --> Model
+    Agent3 --> Model
+    Agent1 --> Tools1[Tools/Data Sources]
+    Agent2 --> Tools2[Tools/Data Sources]
+    Agent3 --> Tools3[Tools/Data Sources]
+    API --> AppInsights[Application Insights via Foundry Telemetry]
 ```
 
 ## Azure Services Required
 
-| Service | Purpose | Bicep Module |
-|---------|---------|-------------|
-| Azure Container Apps | Host orchestrator + agents | `modules/container-apps.bicep` |
-| Azure AI Foundry | Agent hosting + management | `modules/ai-foundry.bicep` |
-| Azure OpenAI | LLM for all agents | `modules/openai.bicep` |
-| Azure Blob Storage | Agent data storage | `modules/storage.bicep` |
-| Application Insights | Tracing across agents | `modules/monitoring.bicep` |
-| Container Registry | Docker images | `modules/container-registry.bicep` |
-| Key Vault | Secrets | `modules/keyvault.bicep` |
+| Service | Purpose | Module |
+|---------|---------|--------|
+| Azure AI Foundry | AI Services + Project + Agent Service | `core/host/ai-environment.bicep` |
+| Azure Container Apps | Host orchestrator API + frontend | `core/host/container-apps.bicep` |
+| Azure Blob Storage | Agent data + file storage | (bundled in ai-environment) |
+| Application Insights | Tracing across agents | (bundled in ai-environment) |
+| Container Registry | Docker images | (bundled in container-apps) |
+| Log Analytics | Logs | (bundled in ai-environment) |
+
+**Note:** No Key Vault needed. No standalone OpenAI resource — models are deployed via AI Services.
 
 ## App Code Structure (Python)
 
@@ -39,157 +41,301 @@ graph TB
 src/
 ├── api/
 │   ├── __init__.py
-│   ├── app.py                      # FastAPI orchestrator
-│   ├── config.py
-│   ├── routes/
-│   │   ├── __init__.py
-│   │   ├── chat.py                 # User-facing chat endpoint
-│   │   └── health.py
-│   └── orchestrator/
-│       ├── __init__.py
-│       └── coordinator.py          # Routes requests to agents
-├── agents/
-│   ├── <agent-1>/
-│   │   ├── agent.yaml              # Agent descriptor
-│   │   ├── main.py                 # Agent logic
-│   │   └── schemas.py             # Input/output schemas
-│   ├── <agent-2>/
-│   │   ├── agent.yaml
-│   │   ├── main.py
-│   │   └── schemas.py
-│   └── <agent-3>/
-│       ├── agent.yaml
-│       ├── main.py
-│       └── schemas.py
+│   ├── main.py                     # FastAPI app factory + lifespan
+│   ├── routes.py                   # Chat endpoint (invokes agent)
+│   ├── util.py                     # Logger, request models
+│   ├── logging_config.py           # Structured logging setup
+│   ├── static/                     # Built React frontend
+│   └── templates/                  # Jinja2 shell
+├── frontend/                       # React chat UI
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.ts
 ├── Dockerfile
 ├── requirements.txt
-└── gunicorn.conf.py
+├── gunicorn.conf.py
+└── __init__.py
 ```
 
 ## Key Code Patterns
 
-### Orchestrator (`orchestrator/coordinator.py`)
+### App factory with lifespan (`api/main.py`)
+
 ```python
-from azure.identity import DefaultAzureCredential
-from azure.ai.projects import AIProjectClient
-from config import settings
+import contextlib
+import os
 
-credential = DefaultAzureCredential()
+import fastapi
+from azure.ai.projects.aio import AIProjectClient
+from azure.ai.projects.telemetry import AIProjectInstrumentor
+from azure.identity.aio import DefaultAzureCredential
+from dotenv import load_dotenv
+from fastapi.staticfiles import StaticFiles
 
-class AgentCoordinator:
-    def __init__(self):
-        self.project_client = AIProjectClient(
-            endpoint=settings.ai_project_endpoint,
-            credential=credential,
-        )
-    
-    async def process_request(self, user_message: str) -> dict:
-        """Route request through appropriate agents."""
-        # 1. Classify intent
-        intent = await self._classify_intent(user_message)
-        
-        # 2. Route to appropriate agent(s)
-        results = []
-        for agent_name in intent["agents"]:
-            result = await self._invoke_agent(agent_name, user_message)
-            results.append(result)
-        
-        # 3. Synthesize response
-        return await self._synthesize(results, user_message)
-    
-    async def _invoke_agent(self, agent_name: str, message: str) -> dict:
-        """Call a specific agent via Foundry Agent Service."""
-        agent = self.project_client.agents.get_agent(agent_name)
-        thread = self.project_client.agents.create_thread()
-        
-        self.project_client.agents.create_message(
-            thread_id=thread.id,
-            role="user",
-            content=message,
-        )
-        
-        run = self.project_client.agents.create_and_process_run(
+enable_trace = False
+
+@contextlib.asynccontextmanager
+async def lifespan(app: fastapi.FastAPI):
+    proj_endpoint = os.environ["AZURE_EXISTING_AIPROJECT_ENDPOINT"]
+    agent_id = os.environ.get("AZURE_EXISTING_AGENT_ID")
+
+    async with (
+        DefaultAzureCredential() as credential,
+        AIProjectClient(endpoint=proj_endpoint, credential=credential) as project_client,
+    ):
+        # Set up tracing if enabled
+        if enable_trace:
+            conn_string = await project_client.telemetry.get_application_insights_connection_string()
+            if conn_string:
+                from azure.monitor.opentelemetry import configure_azure_monitor
+                configure_azure_monitor(connection_string=conn_string)
+                AIProjectInstrumentor().instrument(True)
+
+        # Get or create the agent
+        if agent_id:
+            agent = await project_client.agents.get_agent(agent_id)
+        else:
+            agent = await project_client.agents.create_agent(
+                model=os.environ["AZURE_AI_CHAT_DEPLOYMENT_NAME"],
+                name="orchestrator",
+                instructions="You are a helpful orchestrator agent.",
+            )
+
+        app.state.project_client = project_client
+        app.state.agent = agent
+        yield
+
+
+def create_app():
+    if not os.getenv("RUNNING_IN_PRODUCTION"):
+        load_dotenv(override=True)
+
+    global enable_trace
+    enable_trace = os.getenv("ENABLE_AZURE_MONITOR_TRACING", "").lower() == "true"
+
+    app = fastapi.FastAPI(lifespan=lifespan)
+    app.mount("/static", StaticFiles(directory="api/static"), name="static")
+
+    from . import routes
+    app.include_router(routes.router)
+    return app
+```
+
+### Agent invocation (`api/routes.py`)
+
+```python
+import json
+import fastapi
+from fastapi import Request, Depends
+from fastapi.responses import StreamingResponse
+from azure.ai.projects.aio import AIProjectClient
+from .util import ChatRequest
+
+router = fastapi.APIRouter()
+
+def get_project_client(request: Request) -> AIProjectClient:
+    return request.app.state.project_client
+
+def get_agent(request: Request):
+    return request.app.state.agent
+
+@router.post("/chat")
+async def chat_handler(
+    chat_request: ChatRequest,
+    project_client: AIProjectClient = Depends(get_project_client),
+    agent = Depends(get_agent),
+) -> StreamingResponse:
+
+    async def response_stream():
+        # Create a thread for this conversation
+        thread = await project_client.agents.create_thread()
+
+        # Add user messages to thread
+        for msg in chat_request.messages:
+            await project_client.agents.create_message(
+                thread_id=thread.id,
+                role=msg.role,
+                content=msg.content,
+            )
+
+        # Run the agent and stream response
+        async with await project_client.agents.create_stream(
             thread_id=thread.id,
             agent_id=agent.id,
-        )
-        
-        messages = self.project_client.agents.list_messages(thread_id=thread.id)
-        return {"agent": agent_name, "response": messages.data[0].content[0].text.value}
+        ) as stream:
+            async for event in stream:
+                if hasattr(event, "text"):
+                    yield f"data: {json.dumps({'content': event.text, 'type': 'message'})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'stream_end'})}\n\n"
+
+    return StreamingResponse(response_stream(), headers={
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream",
+    })
+
+@router.get("/health")
+async def health():
+    return {"status": "healthy"}
 ```
 
-### Agent descriptor (`agents/<name>/agent.yaml`)
-```yaml
-name: <agent-name>
-description: >
-  <What this agent does, what inputs it processes, what output it produces>
-model: gpt-4o-mini
-instructions: |
-  You are a specialized agent for <domain>.
-  Your role is to <specific task>.
-  Always respond with structured output.
-tools:
-  - type: file_search
-  - type: code_interpreter
+### Multi-agent orchestration pattern (when multiple specialized agents are needed)
+
+```python
+class AgentOrchestrator:
+    """Routes requests to specialized agents based on intent."""
+
+    def __init__(self, project_client: AIProjectClient, agents: dict):
+        self.project_client = project_client
+        self.agents = agents  # {"research": agent_id, "code": agent_id, ...}
+
+    async def route_and_invoke(self, message: str, intent: str) -> str:
+        agent_id = self.agents.get(intent, self.agents["default"])
+        thread = await self.project_client.agents.create_thread()
+
+        await self.project_client.agents.create_message(
+            thread_id=thread.id, role="user", content=message
+        )
+
+        run = await self.project_client.agents.create_and_process_run(
+            thread_id=thread.id, agent_id=agent_id
+        )
+
+        messages = await self.project_client.agents.list_messages(thread_id=thread.id)
+        return messages.data[0].content[0].text.value
 ```
+
+### Gunicorn config (`gunicorn.conf.py`)
+
+```python
+import os
+
+max_requests = 1000
+max_requests_jitter = 50
+log_file = "-"
+bind = "0.0.0.0:50505"
+
+if not os.getenv("RUNNING_IN_PRODUCTION"):
+    reload = True
+```
+
+### Dockerfile
+
+```dockerfile
+FROM python:3.13-slim-bookworm
+WORKDIR /code
+COPY . .
+
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+
+RUN apt-get update && apt-get install -y curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs && npm install -g pnpm@10.6.0
+
+WORKDIR /code/frontend
+RUN pnpm install --frozen-lockfile=false && pnpm build && rm -rf node_modules
+
+WORKDIR /code
+EXPOSE 50505
+CMD ["gunicorn", "api.main:create_app"]
+```
+
+### requirements.txt
+
+```
+fastapi>=0.121.0
+uvicorn[standard]>=0.29.0
+gunicorn>=23.0.0
+azure-identity>=1.19.0
+azure-ai-projects>=1.0.0
+azure-ai-inference>=1.0.0
+azure-core>=1.34.0
+azure-core-tracing-opentelemetry
+azure-monitor-opentelemetry>=1.6.0
+opentelemetry-sdk
+jinja2
+python-dotenv
+```
+
+### Environment variables
+
+| Variable | Source | Purpose |
+|----------|--------|---------|
+| `AZURE_CLIENT_ID` | Managed identity | Auth in production |
+| `AZURE_EXISTING_AIPROJECT_ENDPOINT` | AI Project endpoint | Connect to Foundry |
+| `AZURE_EXISTING_AGENT_ID` | Postdeploy script output | Pre-registered agent ID |
+| `AZURE_AI_CHAT_DEPLOYMENT_NAME` | Bicep param | Model for agents |
+| `RUNNING_IN_PRODUCTION` | `'true'` | Switch credential type |
+| `ENABLE_AZURE_MONITOR_TRACING` | Bicep param | Enable tracing |
 
 ## azure.yaml for this pattern
+
 ```yaml
 name: <project-slug>
 metadata:
   template: <project-slug>@1.0.0
 
+requiredVersions:
+  azd: ">=1.18.0"
+
 hooks:
-  preprovision:
+  preup:
     posix:
       shell: sh
-      run: chmod +x ./scripts/preprovision.sh && ./scripts/preprovision.sh
+      run: chmod u+r+x ./scripts/validate_env_vars.sh 2>/dev/null || true; ./scripts/validate_env_vars.sh
       interactive: true
       continueOnError: false
     windows:
       shell: pwsh
-      run: ./scripts/preprovision.ps1
+      run: ./scripts/validate_env_vars.ps1
       interactive: true
       continueOnError: false
-  postprovision:
+  postdeploy:
     posix:
       shell: sh
-      run: chmod +x ./scripts/postprovision.sh && ./scripts/postprovision.sh
+      run: chmod u+r+x ./scripts/postdeploy.sh 2>/dev/null || true; ./scripts/postdeploy.sh
       interactive: true
       continueOnError: true
     windows:
       shell: pwsh
-      run: ./scripts/postprovision.ps1
+      run: ./scripts/postdeploy.ps1
       interactive: true
       continueOnError: true
 
 services:
-  api:
+  api_and_frontend:
     project: ./src
     language: py
     host: containerapp
     docker:
-      image: api
+      image: api_and_frontend
       remoteBuild: true
+
+pipeline:
+  variables:
+    - AZURE_RESOURCE_GROUP
+    - AZURE_EXISTING_AIPROJECT_RESOURCE_ID
+    - AZURE_AI_CHAT_DEPLOYMENT_NAME
+    - AZURE_EXISTING_AGENT_ID
 ```
 
 ## Bicep Specifics
 
 The `infra/main.bicep` for a multi-agent system MUST create:
 1. Resource group
-2. Azure AI Foundry Hub + Project
-3. Azure OpenAI with model deployments
-4. Container Apps Environment + Container App (orchestrator)
-5. Container Registry
-6. Storage Account (agent data)
-7. Application Insights + Log Analytics
-8. Key Vault
-9. Managed Identity with:
-    - `Cognitive Services OpenAI User` on OpenAI
-    - `Azure AI Developer` on AI Foundry project
-    - `Storage Blob Data Contributor` on Storage
+2. AI Foundry environment (via `core/host/ai-environment.bicep`): Storage + Monitoring + AI Services + Project + Connections + Model deployments
+3. Container Apps Environment + Container App + Container Registry
+4. User-assigned managed identity for the Container App
+5. Role assignments for BOTH user AND backend identity:
+   - `Azure AI Developer` (64702f94) — required for Agent Service API
+   - `Cognitive Services User` (a97b65f3)
+   - `Azure AI User` (53ca6127) — user only
+6. AppInsights Monitoring Metrics Contributor scoped to backend identity
+7. Support "bring your own existing project" via `azureExistingAIProjectResourceId`
 
-## Postprovision Script
+## Postdeploy Script
 
-1. Register agents with Foundry Agent Service
-2. Upload any tool files (for file_search)
-3. Print deployed app URL + Foundry project URL
+1. Register agents with Foundry Agent Service (via `azure-ai-projects` SDK)
+2. Upload any tool files (for file_search tool)
+3. Store agent IDs in azd environment (`azd env set AZURE_EXISTING_AGENT_ID <id>`)
+4. Print deployed app URL + Foundry project URL

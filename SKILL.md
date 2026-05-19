@@ -81,7 +81,7 @@ hooks:
   preup:
     posix:
       shell: sh
-      run: chmod u+r+x ./scripts/validate_env_vars.sh; ./scripts/validate_env_vars.sh
+      run: chmod u+r+x ./scripts/validate_env_vars.sh 2>/dev/null || true; ./scripts/validate_env_vars.sh
       interactive: true
       continueOnError: false
     windows:
@@ -92,7 +92,7 @@ hooks:
   postdeploy:
     posix:
       shell: sh
-      run: chmod u+r+x ./scripts/postdeploy.sh; ./scripts/postdeploy.sh
+      run: chmod u+r+x ./scripts/postdeploy.sh 2>/dev/null || true; ./scripts/postdeploy.sh
       interactive: true
       continueOnError: true
     windows:
@@ -408,10 +408,29 @@ See [DISCLAIMER.md](./DISCLAIMER.md) for full disclaimer text including export c
 - `LICENSE` — MIT
 - `CONTRIBUTING.md` — Standard contribution guide
 - `.gitignore` — Python/Node + Azure + IDE ignores
+- `.gitattributes` — **CRITICAL**: Force LF line endings for shell scripts to avoid CRLF issues on Windows
 - `.devcontainer/devcontainer.json` — Dev container config with azd, Azure CLI, language runtime
 - `pyproject.toml` — Root-level Python project config (enables `pip install -e src` in dev container)
 - `requirements-dev.txt` — Dev dependencies (linting, testing)
 - `src/.env.sample` — All required environment variables with descriptions and examples
+
+**`.gitattributes` content (ALWAYS include):**
+```
+# Force LF line endings for shell scripts (prevents CRLF issues on Windows)
+*.sh text eol=lf
+*.bash text eol=lf
+scripts/** text eol=lf
+
+# Other text files use auto
+* text=auto
+*.py text eol=lf
+*.bicep text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+```
 
 **Optional root files (include when applicable):**
 - `docker-compose.yaml` — Only if the template has multiple services that benefit from local orchestration
@@ -696,6 +715,7 @@ Support iterative modifications:
 13. **gunicorn.conf.py** — use for startup logic (agent creation, data loading, service registration)
 14. **Feature flags in Bicep** — use `param useXxx bool = false` to allow optional services
 15. **Consistent naming** — use `resourceToken` from `uniqueString(subscription().id, environmentName, location)`
+16. **Line endings** — ALWAYS generate `.gitattributes` with `*.sh text eol=lf`. Shell scripts MUST use LF endings (not CRLF) or `azd up` will fail on Windows with `: not found` errors.
 
 ### .devcontainer/devcontainer.json Pattern
 

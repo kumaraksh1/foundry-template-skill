@@ -2,8 +2,8 @@
   "name": "keyvault",
   "displayName": "Azure Key Vault",
   "category": "security",
-  "description": "Secure storage for secrets, keys, and certificates",
-  "required": true,
+  "description": "Secure storage for secrets, keys, and certificates. Only include when the template explicitly needs secret storage — many modern templates use Managed Identity exclusively and skip Key Vault.",
+  "required": false,
   "bicep": {
     "modulePath": "modules/keyvault.bicep",
     "parameters": ["keyVaultName"],

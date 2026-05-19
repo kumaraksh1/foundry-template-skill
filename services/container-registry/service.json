@@ -1,0 +1,42 @@
+{
+  "name": "container-registry",
+  "displayName": "Azure Container Registry",
+  "category": "compute",
+  "description": "Private Docker container registry for storing and managing container images. Required when using Container Apps with docker remoteBuild.",
+  "bicep": {
+    "modulePath": "core/host/container-apps.bicep",
+    "note": "Container Registry is typically created alongside Container Apps Environment in the same module",
+    "parameters": ["containerRegistryName"],
+    "outputs": ["registryLoginServer", "registryName"]
+  },
+  "environmentVariables": [
+    "AZURE_CONTAINER_REGISTRY_ENDPOINT"
+  ],
+  "dependencies": {
+    "python": [],
+    "typescript": []
+  },
+  "roleAssignments": [
+    {
+      "role": "AcrPull",
+      "roleDefinitionId": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
+      "assignTo": ["backend"],
+      "note": "Backend managed identity needs pull access to registry"
+    },
+    {
+      "role": "AcrPush",
+      "roleDefinitionId": "8311e382-0749-4cb8-b61a-304f252e45ec",
+      "assignTo": ["user"],
+      "note": "Deploying user needs push access during azd deploy"
+    }
+  ],
+  "defaultConfig": {
+    "sku": "Basic",
+    "adminUserEnabled": true
+  },
+  "notes": [
+    "Usually bundled with container-apps module rather than deployed standalone",
+    "Required when azure.yaml service has docker.remoteBuild: true",
+    "The container-apps.bicep module creates both the environment AND the registry"
+  ]
+}

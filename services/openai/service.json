@@ -19,7 +19,18 @@
   "roleAssignments": [
     {
       "role": "Cognitive Services OpenAI User",
-      "roleDefinitionId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
+      "roleDefinitionId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
+      "note": "Use for standalone OpenAI resources (kind: OpenAI)"
+    },
+    {
+      "role": "Azure AI Developer",
+      "roleDefinitionId": "64702f94-c441-49e6-a78b-ef80e0188fee",
+      "note": "Use for AI Services resources (kind: AIServices) — preferred for Foundry"
+    },
+    {
+      "role": "Cognitive Services User",
+      "roleDefinitionId": "a97b65f3-24c7-4388-baec-2e87135dc908",
+      "note": "Required for both standalone and AIServices patterns"
     }
   ],
   "defaultConfig": {

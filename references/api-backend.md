@@ -7,22 +7,24 @@ User wants: REST API, microservice, backend service, data processing API, integr
 
 ```mermaid
 graph LR
-    Client[Client / Frontend] --> API[Python/TS API / Container App]
-    API --> OpenAI[Azure OpenAI]
-    API --> DB[(Database)]
+    Client[Client / Frontend] --> API[FastAPI / Container App]
+    API --> ProjectClient[AIProjectClient]
+    ProjectClient --> Model[AI Model Deployments]
+    API --> DB[(Database - Cosmos DB / SQL)]
     API --> AppInsights[Application Insights]
 ```
 
 ## Azure Services Required
 
-| Service | Purpose | Bicep Module |
-|---------|---------|-------------|
-| Azure Container Apps | Host the API | `modules/container-apps.bicep` |
-| Azure OpenAI | AI capabilities | `modules/openai.bicep` |
-| Cosmos DB or Azure SQL | Data persistence | `modules/cosmos-db.bicep` or `modules/sql.bicep` |
-| Application Insights | Monitoring | `modules/monitoring.bicep` |
-| Container Registry | Docker images | `modules/container-registry.bicep` |
-| Key Vault | Secrets | `modules/keyvault.bicep` |
+| Service | Purpose | Module |
+|---------|---------|--------|
+| Azure AI Foundry | AI Services + Project + Models | `core/host/ai-environment.bicep` |
+| Azure Container Apps | Host the API | `core/host/container-apps.bicep` |
+| Cosmos DB or Azure SQL | Data persistence (optional) | `modules/cosmos-db.bicep` or `modules/sql.bicep` |
+| Application Insights | Monitoring | (bundled in ai-environment) |
+| Container Registry | Docker images | (bundled in container-apps) |
+
+**Note:** No Key Vault needed for most API backends — use Managed Identity for all service auth.
 
 ## App Code Structure (Python)
 
@@ -30,119 +32,231 @@ graph LR
 src/
 ├── api/
 │   ├── __init__.py
-│   ├── app.py                  # FastAPI application
-│   ├── config.py               # Environment configuration
-│   ├── routes/
-│   │   ├── __init__.py
-│   │   ├── health.py           # Health check
-│   │   └── <domain>.py         # Domain-specific routes
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── openai_service.py   # AI integration
-│   │   └── db_service.py       # Database operations
-│   └── models/
+│   ├── main.py                 # FastAPI app factory + lifespan
+│   ├── routes.py               # Domain-specific API routes
+│   ├── util.py                 # Logger, models
+│   └── services/
 │       ├── __init__.py
-│       └── <domain>.py         # Pydantic models
+│       └── db_service.py       # Database operations (if needed)
 ├── Dockerfile
 ├── requirements.txt
-└── gunicorn.conf.py
+├── gunicorn.conf.py
+└── __init__.py
 ```
 
 ## Key Code Patterns
 
-### FastAPI app (`app.py`)
+### App factory with AI client (`api/main.py`)
+
 ```python
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from azure.monitor.opentelemetry import configure_azure_monitor
-from config import settings
-from routes import health, domain_router
+import contextlib
+import os
+from typing import Union
+from urllib.parse import urlparse
 
-if settings.applicationinsights_connection_string:
-    configure_azure_monitor(connection_string=settings.applicationinsights_connection_string)
+import fastapi
+from azure.ai.projects.aio import AIProjectClient
+from azure.ai.inference.aio import ChatCompletionsClient
+from azure.identity import AzureDeveloperCliCredential, ManagedIdentityCredential
+from dotenv import load_dotenv
 
-app = FastAPI(title=settings.app_name, version="1.0.0")
+@contextlib.asynccontextmanager
+async def lifespan(app: fastapi.FastAPI):
+    if not os.getenv("RUNNING_IN_PRODUCTION"):
+        tenant_id = os.getenv("AZURE_TENANT_ID")
+        azure_credential = AzureDeveloperCliCredential(tenant_id=tenant_id) if tenant_id else AzureDeveloperCliCredential()
+    else:
+        azure_credential = ManagedIdentityCredential(client_id=os.getenv("AZURE_CLIENT_ID"))
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    endpoint = os.environ["AZURE_EXISTING_AIPROJECT_ENDPOINT"]
+    project = AIProjectClient(credential=azure_credential, endpoint=endpoint)
 
-app.include_router(health.router)
-app.include_router(domain_router.router, prefix="/api")
+    # Derive inference endpoint
+    inference_endpoint = f"https://{urlparse(endpoint).netloc}/models"
+
+    chat = ChatCompletionsClient(
+        endpoint=inference_endpoint,
+        credential=azure_credential,
+        credential_scopes=["https://ai.azure.com/.default"],
+    )
+
+    app.state.chat = chat
+    app.state.chat_model = os.environ["AZURE_AI_CHAT_DEPLOYMENT_NAME"]
+    app.state.project = project
+    yield
+
+    await project.close()
+    await chat.close()
+
+
+def create_app():
+    if not os.getenv("RUNNING_IN_PRODUCTION"):
+        load_dotenv(override=True)
+
+    app = fastapi.FastAPI(title="API Backend", version="1.0.0")
+
+    from . import routes
+    app.include_router(routes.router)
+    return app
 ```
 
-### Database service with Cosmos DB (`services/db_service.py`)
-```python
-from azure.identity import DefaultAzureCredential
-from azure.cosmos.aio import CosmosClient
-from config import settings
+### Domain routes (`api/routes.py`)
 
-credential = DefaultAzureCredential()
+```python
+import fastapi
+from fastapi import Request, Depends
+from azure.ai.inference.aio import ChatCompletionsClient
+from .util import ProcessRequest, ProcessResponse
+
+router = fastapi.APIRouter()
+
+def get_chat_client(request: Request) -> ChatCompletionsClient:
+    return request.app.state.chat
+
+def get_chat_model(request: Request) -> str:
+    return request.app.state.chat_model
+
+@router.post("/api/process", response_model=ProcessResponse)
+async def process(
+    request: ProcessRequest,
+    chat_client: ChatCompletionsClient = Depends(get_chat_client),
+    model: str = Depends(get_chat_model),
+):
+    """Process input using AI model."""
+    response = await chat_client.complete(
+        model=model,
+        messages=[
+            {"role": "system", "content": "You are a helpful API assistant."},
+            {"role": "user", "content": request.input},
+        ],
+    )
+    return ProcessResponse(
+        result=response.choices[0].message.content,
+        model=model,
+    )
+
+@router.get("/health")
+async def health():
+    return {"status": "healthy"}
+```
+
+### Database service with Cosmos DB (`api/services/db_service.py`)
+
+```python
+import os
+from azure.identity.aio import DefaultAzureCredential
+from azure.cosmos.aio import CosmosClient
 
 class DatabaseService:
     def __init__(self):
-        self.client = CosmosClient(
-            url=settings.cosmos_endpoint,
-            credential=credential,
-        )
-        self.database = self.client.get_database_client(settings.cosmos_database)
-        self.container = self.database.get_container_client(settings.cosmos_container)
-    
+        self.endpoint = os.environ["AZURE_COSMOS_ENDPOINT"]
+        self.database_name = os.environ.get("AZURE_COSMOS_DATABASE", "appdb")
+        self.container_name = os.environ.get("AZURE_COSMOS_CONTAINER", "items")
+
+    async def _get_container(self):
+        credential = DefaultAzureCredential()
+        client = CosmosClient(url=self.endpoint, credential=credential)
+        database = client.get_database_client(self.database_name)
+        return database.get_container_client(self.container_name)
+
     async def create_item(self, item: dict) -> dict:
-        return await self.container.create_item(body=item)
-    
+        container = await self._get_container()
+        return await container.create_item(body=item)
+
     async def get_item(self, item_id: str, partition_key: str) -> dict:
-        return await self.container.read_item(item=item_id, partition_key=partition_key)
-    
+        container = await self._get_container()
+        return await container.read_item(item=item_id, partition_key=partition_key)
+
     async def query_items(self, query: str, parameters: list = None) -> list:
+        container = await self._get_container()
         items = []
-        async for item in self.container.query_items(query=query, parameters=parameters):
+        async for item in container.query_items(query=query, parameters=parameters):
             items.append(item)
         return items
 ```
 
-## requirements.txt
-```
-fastapi>=0.115.0
-uvicorn>=0.30.0
-azure-identity>=1.17.0
-openai>=1.40.0
-azure-cosmos>=4.7.0
-azure-monitor-opentelemetry>=1.6.0
-gunicorn>=22.0.0
-pydantic>=2.8.0
+### Gunicorn config
+
+```python
+import os
+
+max_requests = 1000
+max_requests_jitter = 50
+log_file = "-"
+bind = "0.0.0.0:50505"
+
+if not os.getenv("RUNNING_IN_PRODUCTION"):
+    reload = True
 ```
 
+### Dockerfile
+
+```dockerfile
+FROM python:3.13-slim-bookworm
+WORKDIR /code
+COPY . .
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+EXPOSE 50505
+CMD ["gunicorn", "api.main:create_app"]
+```
+
+### requirements.txt
+
+```
+fastapi>=0.121.0
+uvicorn[standard]>=0.29.0
+gunicorn>=23.0.0
+azure-identity>=1.19.0
+azure-ai-projects>=1.0.0
+azure-ai-inference>=1.0.0
+azure-cosmos>=4.7.0
+azure-core>=1.34.0
+azure-monitor-opentelemetry>=1.6.0
+pydantic>=2.8.0
+python-dotenv
+```
+
+### Environment variables
+
+| Variable | Source | Purpose |
+|----------|--------|---------|
+| `AZURE_CLIENT_ID` | Managed identity | Auth in production |
+| `AZURE_EXISTING_AIPROJECT_ENDPOINT` | AI Project endpoint | Connect to Foundry |
+| `AZURE_AI_CHAT_DEPLOYMENT_NAME` | Bicep param | Model name |
+| `AZURE_COSMOS_ENDPOINT` | Cosmos DB output | Database (if used) |
+| `RUNNING_IN_PRODUCTION` | `'true'` | Switch credential type |
+
 ## azure.yaml for this pattern
+
 ```yaml
 name: <project-slug>
 metadata:
   template: <project-slug>@1.0.0
 
+requiredVersions:
+  azd: ">=1.18.0"
+
 hooks:
-  preprovision:
+  preup:
     posix:
       shell: sh
-      run: chmod +x ./scripts/preprovision.sh && ./scripts/preprovision.sh
+      run: chmod u+r+x ./scripts/validate_env_vars.sh 2>/dev/null || true; ./scripts/validate_env_vars.sh
       interactive: true
       continueOnError: false
     windows:
       shell: pwsh
-      run: ./scripts/preprovision.ps1
+      run: ./scripts/validate_env_vars.ps1
       interactive: true
       continueOnError: false
-  postprovision:
+  postdeploy:
     posix:
       shell: sh
-      run: chmod +x ./scripts/postprovision.sh && ./scripts/postprovision.sh
+      run: chmod u+r+x ./scripts/postdeploy.sh 2>/dev/null || true; ./scripts/postdeploy.sh
       interactive: true
       continueOnError: true
     windows:
       shell: pwsh
-      run: ./scripts/postprovision.ps1
+      run: ./scripts/postdeploy.ps1
       interactive: true
       continueOnError: true
 
@@ -154,18 +268,24 @@ services:
     docker:
       image: api
       remoteBuild: true
+
+pipeline:
+  variables:
+    - AZURE_RESOURCE_GROUP
+    - AZURE_EXISTING_AIPROJECT_RESOURCE_ID
+    - AZURE_AI_CHAT_DEPLOYMENT_NAME
 ```
 
 ## Bicep Specifics
 
 The `infra/main.bicep` for an API backend MUST create:
 1. Resource group
-2. Container Apps Environment + Container App
-3. Container Registry
-4. Azure OpenAI with model deployment
-5. Cosmos DB account + database + container (or Azure SQL if relational data)
-6. Application Insights + Log Analytics
-7. Key Vault
-8. Managed Identity with:
-    - `Cognitive Services OpenAI User` on OpenAI
-    - Role on database (Cosmos DB: custom data plane role; SQL: db_datareader/writer)
+2. AI Foundry environment (via `core/host/ai-environment.bicep`): Storage + Monitoring + AI Services + Project + Model deployments
+3. Container Apps Environment + Container App + Container Registry
+4. Cosmos DB account + database + container (optional — only if data persistence needed)
+5. User-assigned managed identity for the Container App
+6. Role assignments for BOTH user AND backend identity:
+   - `Azure AI Developer` (64702f94)
+   - `Cognitive Services User` (a97b65f3)
+   - Cosmos DB data plane role (if database used)
+7. Support "bring your own existing project" via `azureExistingAIProjectResourceId`

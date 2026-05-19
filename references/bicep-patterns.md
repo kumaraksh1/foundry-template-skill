@@ -418,7 +418,9 @@ output name string = containerApp.name
 output uri string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 ```
 
-## Module: Azure OpenAI (`core/ai/openai.bicep`)
+## Module: Azure OpenAI — LEGACY (`core/ai/openai.bicep`)
+
+> **NOTE**: This standalone pattern uses `kind: 'OpenAI'`. For new Foundry-based templates, use the **AI Foundry Composition Module** pattern above (`kind: 'AIServices'` with `allowProjectManagement: true`). Only use this legacy pattern when explicitly needing a standalone OpenAI resource without AI Foundry project management.
 
 ```bicep
 @description('Location for resources')
@@ -694,3 +696,451 @@ module backendRoleSearchContributor 'core/security/role.bicep' = if (useSearchSe
 | Key Vault Secrets User | `4633458b-17de-408a-b874-0445c86b69e6` |
 | AcrPull | `7f951dda-4ed3-4680-a7ca-43fe172d538d` |
 | Monitoring Metrics Publisher | `3913510d-42f4-4e42-8a64-420c390055eb` |
+
+---
+
+## AI Foundry Composition Module (`core/host/ai-environment.bicep`)
+
+This is the **recommended pattern for all new AI templates**. It replaces the standalone `core/ai/openai.bicep` module. It orchestrates Storage + Monitoring + AI Services (with Project + Connections) + Search in one composition module.
+
+### When to Use
+- Any template using Azure AI Foundry (AI Projects, Foundry Tools)
+- Any template that needs model deployments (chat, embeddings)
+- Templates that support "bring your own existing AI project"
+
+### Architecture
+```
+ai-environment.bicep (composition)
+├── core/storage/storage-account.bicep    → Storage with containers + files + queues + tables
+├── core/monitor/loganalytics.bicep       → Log Analytics workspace
+├── core/monitor/applicationinsights.bicep → App Insights (linked to Log Analytics)
+├── core/ai/cognitiveservices.bicep       → AI Services + Project + Connections + Deployments
+├── core/search/search-services.bicep     → AI Search (conditional)
+└── core/security/role.bicep              → Storage RBAC for AI Services identity
+```
+
+### ai-environment.bicep
+
+```bicep
+@minLength(1)
+@description('Primary location for all resources')
+param location string
+
+@description('The AI Project resource name.')
+param aiProjectName string
+@description('The Storage Account resource name.')
+param storageAccountName string
+@description('The AI Services resource name.')
+param aiServicesName string
+@description('The AI Services model deployments.')
+param aiServiceModelDeployments array = []
+@description('The Log Analytics resource name.')
+param logAnalyticsName string = ''
+@description('The Application Insights resource name.')
+param applicationInsightsName string = ''
+@description('The Azure Search resource name.')
+param searchServiceName string = ''
+@description('The Application Insights connection name.')
+param appInsightConnectionName string
+param tags object = {}
+param runnerPrincipalId string
+param runnerPrincipalType string
+
+module storageAccount '../storage/storage-account.bicep' = {
+  name: 'storageAccount'
+  params: {
+    location: location
+    tags: tags
+    name: storageAccountName
+    containers: [{ name: 'default' }]
+    files: [{ name: 'default' }]
+    queues: [{ name: 'default' }]
+    tables: [{ name: 'default' }]
+  }
+}
+
+module logAnalytics '../monitor/loganalytics.bicep' = if (!empty(logAnalyticsName)) {
+  name: 'logAnalytics'
+  params: {
+    location: location
+    tags: tags
+    name: logAnalyticsName
+  }
+}
+
+module applicationInsights '../monitor/applicationinsights.bicep' = if (!empty(applicationInsightsName) && !empty(logAnalyticsName)) {
+  name: 'applicationInsights'
+  params: {
+    location: location
+    tags: tags
+    name: applicationInsightsName
+    logAnalyticsWorkspaceId: !empty(logAnalyticsName) ? logAnalytics.outputs.id : ''
+  }
+}
+
+module cognitiveServices '../ai/cognitiveservices.bicep' = {
+  name: 'cognitiveServices'
+  params: {
+    location: location
+    tags: tags
+    aiServiceName: aiServicesName
+    aiProjectName: aiProjectName
+    deployments: aiServiceModelDeployments
+    appInsightsId: applicationInsights.outputs.id
+    appInsightConnectionName: appInsightConnectionName
+    appInsightConnectionString: applicationInsights.outputs.connectionString
+    storageAccountId: storageAccount.outputs.id
+    storageAccountBlobEndpoint: storageAccount.outputs.primaryEndpoints.blob
+    storageAccountConnectionName: storageAccount.outputs.name
+  }
+}
+
+// AI Services system identity needs blob access for project storage
+module backendStorageBlobDataContributorRoleAssignment '../security/role.bicep' = {
+  name: 'backend-role-storage-blob-data-contributor'
+  params: {
+    principalType: 'ServicePrincipal'
+    principalId: cognitiveServices.outputs.accountPrincipalId
+    roleDefinitionId: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+  }
+}
+
+module userStorageBlobDataContributorRoleAssignment '../security/role.bicep' = {
+  name: 'user-role-storage-blob-data-contributor'
+  params: {
+    principalType: runnerPrincipalType
+    principalId: runnerPrincipalId
+    roleDefinitionId: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+  }
+}
+
+module searchService '../search/search-services.bicep' = if (!empty(searchServiceName)) {
+  dependsOn: [cognitiveServices]
+  name: 'searchService'
+  params: {
+    location: location
+    tags: tags
+    name: searchServiceName
+    semanticSearch: 'free'
+    authOptions: { aadOrApiKey: { aadAuthFailureMode: 'http401WithBearerChallenge' } }
+  }
+}
+
+// Outputs
+output storageAccountId string = storageAccount.outputs.id
+output storageAccountName string = storageAccount.outputs.name
+output applicationInsightsName string = !empty(applicationInsightsName) && !empty(logAnalyticsName) ? applicationInsights!.outputs.name : ''
+output logAnalyticsWorkspaceName string = !empty(logAnalyticsName) ? logAnalytics!.outputs.name : ''
+output aiServicesName string = cognitiveServices.outputs.name
+output aiServiceEndpoint string = cognitiveServices.outputs.endpoints['OpenAI Language Model Instance API']
+output aiProjectEndpoint string = cognitiveServices.outputs.projectEndpoint
+output aiServicePrincipalId string = cognitiveServices.outputs.accountPrincipalId
+output searchServiceEndpoint string = !empty(searchServiceName) ? searchService!.outputs.endpoint : ''
+output searchServiceName string = !empty(searchServiceName) ? searchService!.outputs.name : ''
+output projectResourceId string = cognitiveServices.outputs.projectResourceId
+```
+
+### core/ai/cognitiveservices.bicep (AI Services + Project + Connections + Deployments)
+
+```bicep
+metadata description = 'Creates an Azure AI Services instance with project and Foundry connections.'
+param aiServiceName string
+param aiProjectName string
+param location string = resourceGroup().location
+param tags object = {}
+param customSubDomainName string = aiServiceName
+param disableLocalAuth bool = true
+param deployments array = []
+param appInsightsId string
+param appInsightConnectionString string
+param appInsightConnectionName string
+param storageAccountId string
+param storageAccountBlobEndpoint string
+param storageAccountConnectionName string
+
+@allowed(['Enabled', 'Disabled'])
+param publicNetworkAccess string = 'Enabled'
+param sku object = { name: 'S0' }
+
+resource account 'Microsoft.CognitiveServices/accounts@2025-04-01-preview' = {
+  name: aiServiceName
+  location: location
+  sku: sku
+  kind: 'AIServices'
+  identity: { type: 'SystemAssigned' }
+  tags: tags
+  properties: {
+    allowProjectManagement: true
+    customSubDomainName: customSubDomainName
+    publicNetworkAccess: publicNetworkAccess
+    disableLocalAuth: disableLocalAuth
+  }
+}
+
+// Foundry connection to App Insights
+resource appInsightConnection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = {
+  name: appInsightConnectionName
+  parent: account
+  properties: {
+    category: 'AppInsights'
+    target: appInsightsId
+    authType: 'ApiKey'
+    isSharedToAll: true
+    credentials: { key: appInsightConnectionString }
+    metadata: { ApiType: 'Azure', ResourceId: appInsightsId }
+  }
+}
+
+// Foundry connection to Storage
+resource storageAccountConnection 'Microsoft.CognitiveServices/accounts/connections@2025-04-01-preview' = {
+  name: storageAccountConnectionName
+  parent: account
+  properties: {
+    category: 'AzureStorageAccount'
+    target: storageAccountBlobEndpoint
+    authType: 'AAD'
+    isSharedToAll: true
+    metadata: { ApiType: 'Azure', ResourceId: storageAccountId }
+  }
+}
+
+// AI Project (child of account)
+resource aiProject 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-preview' = {
+  parent: account
+  name: aiProjectName
+  location: location
+  tags: tags
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    description: 'AI Project'
+    displayName: 'AI Project'
+  }
+}
+
+// Model deployments (batchSize 1 to avoid conflicts)
+@batchSize(1)
+resource aiServicesDeployments 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = [for deployment in deployments: {
+  parent: account
+  name: deployment.name
+  properties: {
+    model: deployment.model
+    raiPolicyName: contains(deployment, 'raiPolicyName') ? deployment.raiPolicyName : null
+  }
+  sku: contains(deployment, 'sku') ? deployment.sku : { name: 'Standard', capacity: 20 }
+}]
+
+output endpoint string = account.properties.endpoint
+output endpoints object = account.properties.endpoints
+output id string = account.id
+output name string = account.name
+output projectResourceId string = aiProject.id
+output projectName string = aiProject.name
+output projectEndpoint string = aiProject.properties.endpoints['AI Foundry API']
+output accountPrincipalId string = account.identity.principalId
+output projectPrincipalId string = aiProject.identity.principalId
+```
+
+### "Bring Your Own Existing Project" Pattern in main.bicep
+
+When a user has an existing AI project, skip the ai-environment module but still create resources needed for hosting:
+
+```bicep
+// In main.bicep — support existing project OR create new
+param azureExistingAIProjectResourceId string = ''
+
+// Only create AI environment if no existing project
+module ai 'core/host/ai-environment.bicep' = if (empty(azureExistingAIProjectResourceId)) {
+  name: 'ai'
+  scope: rg
+  params: {
+    location: location
+    tags: tags
+    storageAccountName: '${abbrs.storageStorageAccounts}${resourceToken}'
+    aiServicesName: 'aoai-${resourceToken}'
+    aiProjectName: 'proj-${resourceToken}'
+    aiServiceModelDeployments: aiDeployments
+    logAnalyticsName: '${abbrs.operationalInsightsWorkspaces}${resourceToken}'
+    applicationInsightsName: '${abbrs.insightsComponents}${resourceToken}'
+    searchServiceName: useSearchService ? '${abbrs.searchSearchServices}${resourceToken}' : ''
+    appInsightConnectionName: 'appinsights-connection'
+    runnerPrincipalId: principalId
+    runnerPrincipalType: runnerPrincipalType
+  }
+}
+
+// If bringing existing project, still need Log Analytics for Container Apps
+module logAnalytics 'core/monitor/loganalytics.bicep' = if (!empty(azureExistingAIProjectResourceId)) {
+  name: 'logAnalytics'
+  scope: rg
+  params: {
+    location: location
+    tags: tags
+    name: '${abbrs.operationalInsightsWorkspaces}${resourceToken}'
+  }
+}
+
+// Construct endpoint from resource ID
+var existingProjEndpoint = !empty(azureExistingAIProjectResourceId)
+  ? format('https://{0}.services.ai.azure.com/api/projects/{1}',
+      split(azureExistingAIProjectResourceId, '/')[8],
+      split(azureExistingAIProjectResourceId, '/')[10])
+  : ''
+
+// Resolve which values to use downstream
+var projectResourceId = !empty(azureExistingAIProjectResourceId)
+  ? azureExistingAIProjectResourceId
+  : ai!.outputs.projectResourceId
+
+var projectEndpoint = !empty(azureExistingAIProjectResourceId)
+  ? existingProjEndpoint
+  : ai!.outputs.aiProjectEndpoint
+```
+
+### Model Deployments Array Pattern
+
+Build model deployment arrays conditionally (e.g., only include embedding if search is enabled):
+
+```bicep
+var aiChatModel = [{
+  name: chatDeploymentName
+  model: { format: chatModelFormat, name: chatModelName, version: chatModelVersion }
+  sku: { name: chatDeploymentSku, capacity: chatDeploymentCapacity }
+}]
+
+var aiEmbeddingModel = [{
+  name: embeddingDeploymentName
+  model: { format: embedModelFormat, name: embedModelName, version: embedModelVersion }
+  sku: { name: embedDeploymentSku, capacity: embedDeploymentCapacity }
+}]
+
+// Only deploy embedding model if search is enabled
+var aiDeployments = concat(aiChatModel, useSearchService ? aiEmbeddingModel : [])
+```
+
+### Template Validation Mode Pattern
+
+Support CI/CD template validation without real deployment:
+
+```bicep
+param templateValidationMode bool = false
+@description('Random seed for deterministic resource naming in validation mode')
+param seed string = newGuid()
+
+var runnerPrincipalType = templateValidationMode ? 'ServicePrincipal' : 'User'
+var resourceToken = templateValidationMode
+  ? toLower(uniqueString(subscription().id, environmentName, location, seed))
+  : toLower(uniqueString(subscription().id, environmentName, location))
+```
+
+### AppInsights Scoped Access Pattern (`core/security/appinsights-access.bicep`)
+
+For granting Monitoring Metrics Contributor scoped to a specific App Insights resource:
+
+```bicep
+param principalId string
+param principalType string
+param appInsightsName string
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: appInsightsName
+}
+
+resource role 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(appInsights.id, principalId, '3913510d-42f4-4e42-8a64-420c390055eb')
+  scope: appInsights
+  properties: {
+    principalId: principalId
+    principalType: principalType
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')
+  }
+}
+```
+
+Usage in main.bicep:
+```bicep
+module monitoringMetricsRole 'core/security/appinsights-access.bicep' = if (!empty(resolvedApplicationInsightsName)) {
+  name: 'monitoring-metrics-contributor-backend'
+  scope: rg
+  params: {
+    principalType: 'ServicePrincipal'
+    appInsightsName: resolvedApplicationInsightsName
+    principalId: api.outputs.SERVICE_API_IDENTITY_PRINCIPAL_ID
+  }
+}
+```
+
+### Storage Account with All Service Types (`core/storage/storage-account.bicep`)
+
+Required by AI Foundry — creates containers, file shares, queues, and tables:
+
+```bicep
+param name string
+param location string = resourceGroup().location
+param tags object = {}
+param containers array = []
+param files array = []
+param queues array = []
+param tables array = []
+param deleteRetentionPolicy object = { allowPermanentDelete: false, enabled: false }
+param shareDeleteRetentionPolicy object = { enabled: true, days: 7 }
+
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: name
+  location: location
+  tags: tags
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: true
+    minimumTlsVersion: 'TLS1_2'
+  }
+}
+
+resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: { deleteRetentionPolicy: deleteRetentionPolicy }
+}
+
+resource blobContainers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for container in containers: {
+  parent: blobServices
+  name: container.name
+}]
+
+resource fileServices 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = if (!empty(files)) {
+  parent: storage
+  name: 'default'
+  properties: { shareDeleteRetentionPolicy: shareDeleteRetentionPolicy }
+}
+
+resource fileShares 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = [for file in files: {
+  parent: fileServices
+  name: file.name
+}]
+
+resource queueServices 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = if (!empty(queues)) {
+  parent: storage
+  name: 'default'
+}
+
+resource storageQueues 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = [for queue in queues: {
+  parent: queueServices
+  name: queue.name
+}]
+
+resource tableServices 'Microsoft.Storage/storageAccounts/tableServices@2023-05-01' = if (!empty(tables)) {
+  parent: storage
+  name: 'default'
+}
+
+resource storageTables 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = [for table in tables: {
+  parent: tableServices
+  name: table.name
+}]
+
+output id string = storage.id
+output name string = storage.name
+output primaryEndpoints object = storage.properties.primaryEndpoints
+```
