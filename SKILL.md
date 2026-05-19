@@ -17,26 +17,68 @@ Follow these steps in order. Do not generate files until Step 1 is complete.
 
 ---
 
-### Step 1: Gather Requirements
+### Step 1: Gather Requirements (Multi-Round Deep Discovery)
 
-Ask the user to describe what they want to build. Then ask clarifying questions to fill in ALL of the following. Use smart defaults — only ask when the default might be wrong.
+Your goal is to deeply understand what the user wants to build **before generating any code**. Ask probing questions across multiple rounds until you have complete clarity. Do NOT rush to generation.
 
-**Batch your questions** — don't ask one at a time. Present them as a numbered list the user can answer quickly.
+**Strategy: Ask in rounds.** Each round should be a numbered list of 4-6 questions. Wait for answers before asking the next round. Typically 2-3 rounds are needed.
 
-#### Required Information
+---
+
+#### Round 1: Core Vision & Scope
 
 | # | Question | Default | Why it matters |
 |---|----------|---------|----------------|
-| 1 | **What does the app do?** (one sentence) | — | Drives README, architecture, all naming |
-| 2 | **Scenario type?** | Infer from description | Determines which reference pattern to follow |
-| 3 | **Backend language?** | Python | Drives all app code, dependencies, Dockerfile |
-| 4 | **Frontend needed?** | Yes (React) | Whether to include frontend code and Static Web App |
-| 5 | **AI model?** | gpt-4o-mini | Model deployment in Bicep + SDK config |
-| 6 | **Knowledge retrieval?** | AI Search (if RAG) | Whether to include search infra + indexing |
-| 7 | **Deployment target?** | Container Apps | Bicep modules, azure.yaml host type |
-| 8 | **Default region?** | eastus2 | Parameter default in Bicep |
-| 9 | **Authentication for end users?** | None (public) | Whether to include Entra ID auth modules |
-| 10 | **Any additional Azure services?** | — | Extra Bicep modules and code connectors |
+| 1 | **What does the app do?** Describe the end-user experience in 2-3 sentences. | — | Drives architecture, naming, README |
+| 2 | **Who are the users?** (internal employees, external customers, developers, admins) | — | Affects auth, scale, UI complexity |
+| 3 | **What's the primary AI capability?** (chat, search, summarization, generation, classification, agents) | — | Determines AI service selection |
+| 4 | **What data sources does it use?** (uploaded docs, database, APIs, real-time feeds, none) | — | Drives storage, indexing, RAG decisions |
+| 5 | **Is this a prototype/demo or production-grade?** | Production | Affects HA, monitoring, security depth |
+| 6 | **Any hard constraints?** (specific region, compliance, budget, existing resources to reuse) | — | Architectural constraints |
+
+---
+
+#### Round 2: Technical Architecture
+
+Based on Round 1 answers, ask targeted follow-ups:
+
+| # | Question | Default | Why it matters |
+|---|----------|---------|----------------|
+| 7 | **Backend language?** | Python | Code generation, Dockerfile, dependencies |
+| 8 | **Frontend type?** (React SPA, server-rendered, mobile, CLI, none) | React SPA | Frontend architecture and hosting |
+| 9 | **AI model preference?** (gpt-4o, gpt-4o-mini, gpt-4.1, custom fine-tuned) | gpt-4o-mini | Bicep model deployment + SDK config |
+| 10 | **Deployment target?** (Container Apps, App Service, AKS, Functions, Static Web Apps) | Container Apps | Hosting infra, scaling model |
+| 11 | **Authentication strategy?** (Entra ID SSO, API key, username/password, none/public) | None (public) | Auth modules, middleware |
+| 12 | **Do you need async/background processing?** (queues, scheduled jobs, event-driven) | No | Affects architecture complexity |
+| 13 | **Expected scale?** (low: <100 users, medium: 100-10K, high: 10K+) | Medium | SKU selection, scaling rules |
+| 14 | **Monitoring/observability needs?** (basic App Insights, distributed tracing, custom dashboards) | Basic App Insights | Monitoring infra |
+
+---
+
+#### Round 3: Integration & Data Flow Details
+
+Probe deeper into how components interact:
+
+| # | Question | Default | Why it matters |
+|---|----------|---------|----------------|
+| 15 | **How does data flow through the system?** (user uploads → processing → AI → response?) | — | Sequence diagram, component design |
+| 16 | **What external APIs or services does it connect to?** (third-party APIs, on-prem systems) | None | Integration code, networking |
+| 17 | **Caching strategy?** (Redis, in-memory, CDN, none) | None | Infra modules, performance |
+| 18 | **Do you need multiple environments?** (dev/staging/prod) | Single env | CI/CD complexity, Bicep parameterization |
+| 19 | **Any sidecar services?** (Redis, Postgres, Elasticsearch alongside the main app) | None | Container Apps sidecars, docker-compose |
+| 20 | **Rate limiting or throttling needs?** | None | API gateway, middleware |
+| 21 | **Data retention or compliance requirements?** (GDPR, HIPAA, data residency) | None | Storage policies, encryption, regions |
+| 22 | **Default Azure region?** | eastus2 | Bicep parameter, model availability |
+
+---
+
+#### Adaptive Questioning Rules
+
+- **Skip questions where the answer is obvious** from prior context (e.g., don't ask about frontend if user said "CLI tool")
+- **Ask follow-up probes** when answers are vague: "You mentioned 'documents' — what format? How large? How frequently updated?"
+- **Suggest options with trade-offs**: "For your scale, I'd recommend Container Apps (serverless, cheaper) over AKS (more control, more ops overhead). Which do you prefer?"
+- **Confirm inferred decisions**: "Since you mentioned PDF documents, I'll include AI Search with a PDF indexer. Sound right?"
+- **Don't stop early** — keep asking until you can mentally draw the entire architecture
 
 #### Scenario Types
 
@@ -53,9 +95,16 @@ If the user's request doesn't fit neatly, choose the closest type and adapt.
 
 #### After Gathering Requirements
 
-Confirm with the user: "Here's what I'll generate: [summary]. Should I proceed, or change anything?"
+Present a **complete summary** with:
 
-Only proceed to Step 2 after confirmation.
+1. **Architecture overview** — what services, how they connect
+2. **Component list** — every Azure resource and app component
+3. **Data flow** — step-by-step how a request flows through the system
+4. **Key decisions made** — language, hosting, auth, AI model, etc.
+
+Ask: "Here's what I'll generate. Should I proceed, or change anything?"
+
+Only proceed to Step 2 after explicit confirmation.
 
 ---
 
@@ -154,6 +203,27 @@ pipeline:
 ![Architecture diagram](docs/images/architecture.png)
 
 <Brief narrative explaining the data flow>
+
+### Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend
+    participant AI as Azure OpenAI
+    participant DB as Data Store
+
+    User->>Frontend: <action description>
+    Frontend->>Backend: <API call>
+    Backend->>AI: <AI interaction>
+    AI-->>Backend: <response>
+    Backend->>DB: <data operation>
+    Backend-->>Frontend: <formatted response>
+    Frontend-->>User: <display result>
+```
+
+<Brief explanation of the sequence — customize the diagram to match the ACTUAL flow of the generated template. Include all major services and interactions. Add notes for async operations, error paths, or conditional flows where relevant.>
 
 ### Key Features
 
@@ -258,6 +328,27 @@ Solution overview
 |---|
 
 <Brief architecture narrative — data flow left to right>
+
+### Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Backend
+    participant AI as Azure OpenAI
+    participant DB as Data Store
+
+    User->>Frontend: <action>
+    Frontend->>Backend: <API call>
+    Backend->>AI: <prompt/query>
+    AI-->>Backend: <completion>
+    Backend->>DB: <store/retrieve>
+    Backend-->>Frontend: <response>
+    Frontend-->>User: <render result>
+```
+
+<Customize this diagram to show the ACTUAL end-to-end flow of the solution. Include all Azure services, async operations, and conditional paths. Add loop/alt blocks for complex flows.>
 
 ### Key features
 <details open>
@@ -390,12 +481,14 @@ See [DISCLAIMER.md](./DISCLAIMER.md) for full disclaimer text including export c
 **Common elements both styles MUST include:**
 1. AI responsibility note (verbatim link to Agent Service + Agent Framework transparency docs)
 2. Architecture diagram reference (`docs/images/architecture.png` or `docs/images/readme/architecture.png`)
-3. Codespaces + Dev Containers badge table
-4. azd version requirement (1.18.0+)
-5. Costs section listing ALL deployed resources with pricing links
-6. ⚠️ `azd down` reminder
-7. Managed Identity security note
-8. Disclaimers section
+3. **Mermaid sequence diagram** showing the complete request flow through all components (MUST be rendered inline in README)
+4. Codespaces + Dev Containers badge table
+5. azd version requirement (1.18.0+)
+6. **Clear, copy-pasteable deployment commands** (prerequisites, deploy, local dev, teardown)
+7. Costs section listing ALL deployed resources with pricing links
+8. ⚠️ `azd down` reminder
+9. Managed Identity security note
+10. Disclaimers section
 
 **Supporting docs to also generate:**
 - `docs/TRANSPARENCY_FAQ.md` — Responsible AI FAQ (always generate)
@@ -677,17 +770,84 @@ Include at minimum:
 
 ---
 
-### Step 3: Validate & Iterate
+### Step 3: Provide Clear Commands
 
-After generating all files, tell the user:
+After generating all files, present the user with **exact, copy-pasteable commands** for every operation. Format as a numbered step-by-step:
 
-> "Template generated. To validate:
-> 1. Check `azure.yaml` — does the service definition match your app?
-> 2. Check `infra/main.bicep` — are all required resources included?
-> 3. Check `src/` — does the app code look correct?
-> 4. Try `azd up` to deploy.
->
-> If anything needs changing, tell me what to fix."
+```
+## 🚀 Deployment Commands
+
+### Prerequisites
+```bash
+# Install Azure Developer CLI (if not already installed)
+curl -fsSL https://aka.ms/install-azd.sh | bash
+
+# Verify version (must be >= 1.18.0)
+azd version
+```
+
+### Deploy to Azure
+```bash
+# 1. Clone the generated template
+git clone <repo-url> && cd <project-slug>
+
+# 2. Sign in to Azure
+azd auth login
+
+# 3. Initialize environment (sets subscription + region)
+azd init
+
+# 4. Deploy everything (infrastructure + app) in one command
+azd up
+
+# 5. Open the deployed app
+azd show
+```
+
+### Local Development
+```bash
+# 1. Install dependencies
+pip install -e src
+pip install -r requirements-dev.txt
+
+# 2. Copy environment template and fill in values
+cp src/.env.sample src/.env
+
+# 3. Run locally
+cd src && uvicorn api.main:create_app --factory --reload --port 50505
+```
+
+### Useful Commands
+```bash
+# View deployed resources
+azd show
+
+# Redeploy after code changes
+azd deploy
+
+# View logs
+azd monitor --logs
+
+# Tear down all resources
+azd down
+```
+```
+
+**Rules for commands:**
+- Every command must be **complete and copy-pasteable** — no `<placeholders>` that the user has to figure out (except repo URL)
+- Include the **expected output** or success indicator where helpful
+- Group commands logically: prerequisites → deploy → local dev → management
+- Include **both bash and PowerShell** where syntax differs
+
+---
+
+### Step 4: Validate & Iterate
+
+After presenting commands, ask the user:
+
+> "Template generated! Review the structure and let me know if anything needs changing.
+> The architecture diagram and sequence diagram are in the README.
+> Ready to customize further?"
 
 Support iterative modifications:
 - "Add Azure SQL Database" → add Bicep module + connection code + env vars
