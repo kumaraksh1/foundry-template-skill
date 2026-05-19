@@ -93,18 +93,59 @@ Determine which type best fits, then load the corresponding reference:
 
 If the user's request doesn't fit neatly, choose the closest type and adapt.
 
-#### After Gathering Requirements
+#### After Gathering Requirements — Confirmation Gate
 
-Present a **complete summary** with:
+**CRITICAL: Do NOT generate any code until the user explicitly confirms.**
 
-1. **Architecture overview** — what services, how they connect
-2. **Component list** — every Azure resource and app component
-3. **Data flow** — step-by-step how a request flows through the system
-4. **Key decisions made** — language, hosting, auth, AI model, etc.
+Present the complete solution flow as a **numbered point-by-point walkthrough** that the user can review:
 
-Ask: "Here's what I'll generate. Should I proceed, or change anything?"
+---
 
-Only proceed to Step 2 after explicit confirmation.
+**"Here's the complete flow I'll implement:"**
+
+**🏗️ Architecture:**
+1. [Component 1] — what it does, which Azure service
+2. [Component 2] — what it does, which Azure service
+3. ... (list ALL components)
+
+**🔄 Request Flow (how it works end-to-end):**
+1. User does X (e.g., "User uploads a PDF via the web UI")
+2. Frontend sends request to Y (e.g., "React app calls POST /api/documents")
+3. Backend processes Z (e.g., "FastAPI extracts text, chunks it, creates embeddings")
+4. AI service does W (e.g., "Azure OpenAI generates embeddings via text-embedding-ada-002")
+5. Data is stored in V (e.g., "Vectors stored in AI Search index")
+6. Response flows back (e.g., "Confirmation returned to user with document ID")
+... (cover EVERY major interaction — don't skip steps)
+
+**⚙️ Technical Decisions:**
+- Language: [Python/TypeScript]
+- Frontend: [React/None/etc.]
+- Hosting: [Container Apps/App Service/etc.]
+- AI Model: [gpt-4o-mini/gpt-4o/etc.]
+- Auth: [Entra ID/None/API key]
+- Data Store: [Cosmos DB/AI Search/Storage/etc.]
+- Region: [eastus2/etc.]
+
+**📦 What I'll generate:**
+- `azure.yaml` — azd deployment config
+- `infra/` — Bicep modules for [list services]
+- `src/` — [language] backend + [frontend if applicable]
+- `scripts/` — Pre/post deployment hooks
+- `.github/workflows/` — CI/CD pipeline
+- `docs/` — Deployment guide, troubleshooting, samples
+- `README.md` — With architecture + sequence diagram
+
+---
+
+Then ask: **"Does this flow look correct? Want me to change anything before I generate the template?"**
+
+**Rules for confirmation:**
+- Wait for explicit "yes", "looks good", "proceed", or similar confirmation
+- If the user says "change X" — update the plan and present it again
+- If the user asks a question — answer it, then re-confirm
+- NEVER skip this step. NEVER generate code on ambiguous responses like "maybe" or "I think so"
+
+Only proceed to Step 2 after clear, unambiguous confirmation.
 
 ---
 
@@ -204,26 +245,19 @@ pipeline:
 
 <Brief narrative explaining the data flow>
 
-### Sequence Diagram
+### Flow Diagram
 
 ```mermaid
-sequenceDiagram
-    participant User
-    participant Frontend
-    participant Backend
-    participant AI as Azure OpenAI
-    participant DB as Data Store
-
-    User->>Frontend: <action description>
-    Frontend->>Backend: <API call>
-    Backend->>AI: <AI interaction>
-    AI-->>Backend: <response>
-    Backend->>DB: <data operation>
-    Backend-->>Frontend: <formatted response>
-    Frontend-->>User: <display result>
+flowchart LR
+    User([User]) --> Frontend[Frontend<br/>React SPA]
+    Frontend --> Backend[Backend<br/>FastAPI]
+    Backend --> AI[Azure OpenAI<br/>gpt-4o-mini]
+    Backend --> DB[(Data Store<br/>Cosmos DB)]
+    AI --> Backend
+    Backend --> Frontend
 ```
 
-<Brief explanation of the sequence — customize the diagram to match the ACTUAL flow of the generated template. Include all major services and interactions. Add notes for async operations, error paths, or conditional flows where relevant.>
+<Customize this flow diagram to show the ACTUAL components and data flow of the generated template. Use left-to-right layout for readability. Include all Azure services as nodes. Use descriptive labels on arrows for key operations (e.g., "upload PDF", "query embeddings"). Add subgraphs for logical groupings if there are 5+ components.>
 
 ### Key Features
 
@@ -329,26 +363,19 @@ Solution overview
 
 <Brief architecture narrative — data flow left to right>
 
-### Sequence Diagram
+### Flow Diagram
 
 ```mermaid
-sequenceDiagram
-    participant User
-    participant Frontend
-    participant Backend
-    participant AI as Azure OpenAI
-    participant DB as Data Store
-
-    User->>Frontend: <action>
-    Frontend->>Backend: <API call>
-    Backend->>AI: <prompt/query>
-    AI-->>Backend: <completion>
-    Backend->>DB: <store/retrieve>
-    Backend-->>Frontend: <response>
-    Frontend-->>User: <render result>
+flowchart LR
+    User([User]) --> Frontend[Frontend<br/>React SPA]
+    Frontend --> Backend[Backend<br/>FastAPI]
+    Backend --> AI[Azure OpenAI<br/>gpt-4o-mini]
+    Backend --> DB[(Data Store)]
+    AI --> Backend
+    Backend --> Frontend
 ```
 
-<Customize this diagram to show the ACTUAL end-to-end flow of the solution. Include all Azure services, async operations, and conditional paths. Add loop/alt blocks for complex flows.>
+<Customize this flow diagram to show the ACTUAL end-to-end data flow. Use left-to-right layout. Show all Azure services as labeled nodes. Use arrow labels for key operations. Add subgraphs to group related components (e.g., "Azure AI Services", "Data Layer").>
 
 ### Key features
 <details open>
@@ -481,7 +508,7 @@ See [DISCLAIMER.md](./DISCLAIMER.md) for full disclaimer text including export c
 **Common elements both styles MUST include:**
 1. AI responsibility note (verbatim link to Agent Service + Agent Framework transparency docs)
 2. Architecture diagram reference (`docs/images/architecture.png` or `docs/images/readme/architecture.png`)
-3. **Mermaid sequence diagram** showing the complete request flow through all components (MUST be rendered inline in README)
+3. **Mermaid flow diagram** showing the complete data flow through all components (left-to-right, quick to scan)
 4. Codespaces + Dev Containers badge table
 5. azd version requirement (1.18.0+)
 6. **Clear, copy-pasteable deployment commands** (prerequisites, deploy, local dev, teardown)
