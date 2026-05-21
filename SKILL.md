@@ -241,23 +241,43 @@ pipeline:
 
 ### Solution Architecture
 
-![Architecture diagram](docs/images/architecture.png)
-
-<Brief narrative explaining the data flow>
-
-### Flow Diagram
+> **Note:** Since you cannot generate actual PNG images, ALWAYS provide the architecture as a Mermaid diagram directly in the README. Do NOT reference a `docs/images/architecture.png` that doesn't exist. Use the Mermaid flowchart below AS the architecture diagram.
 
 ```mermaid
 flowchart LR
-    User([User]) --> Frontend[Frontend<br/>React SPA]
-    Frontend --> Backend[Backend<br/>FastAPI]
-    Backend --> AI[Azure OpenAI<br/>gpt-4o-mini]
-    Backend --> DB[(Data Store<br/>Cosmos DB)]
-    AI --> Backend
-    Backend --> Frontend
+    subgraph User Layer
+        User([👤 User])
+    end
+    subgraph Application["Application Layer"]
+        Frontend[React Frontend<br/>Static Web App]
+        Backend[FastAPI Backend<br/>Container Apps]
+    end
+    subgraph AI["Azure AI Services"]
+        OpenAI[Azure OpenAI<br/>gpt-4o-mini]
+        Search[Azure AI Search]
+    end
+    subgraph Data["Data Layer"]
+        Storage[(Blob Storage)]
+        DB[(Cosmos DB)]
+    end
+    subgraph Ops["Operations"]
+        Monitor[App Insights]
+        LogAnalytics[Log Analytics]
+    end
+
+    User --> Frontend
+    Frontend --> Backend
+    Backend --> OpenAI
+    Backend --> Search
+    Search --> Storage
+    Backend --> DB
+    Backend --> Monitor
+    Monitor --> LogAnalytics
 ```
 
-<Customize this flow diagram to show the ACTUAL components and data flow of the generated template. Use left-to-right layout for readability. Include all Azure services as nodes. Use descriptive labels on arrows for key operations (e.g., "upload PDF", "query embeddings"). Add subgraphs for logical groupings if there are 5+ components.>
+<IMPORTANT: Customize this diagram to match the ACTUAL services in the generated template. Remove services not used. Add services that are used. Use subgraphs to group logically. Every Azure resource provisioned in Bicep MUST appear in this diagram.>
+
+<Brief narrative explaining the data flow — describe what happens step by step when a user interacts with the app>
 
 ### Key Features
 
@@ -267,32 +287,145 @@ flowchart LR
 
 ## Getting Started
 
-| [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/<org>/<repo>) | [![Open in Dev Containers](https://img.shields.io/static/v1?style=for-the-badge&label=Dev%20Containers&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/<org>/<repo>) |
-|---|---|
+You have a few options for setting up this project. The easiest way to get started is GitHub Codespaces, since it will setup all the tools for you, but you can also set it up locally.
 
-> [!IMPORTANT]
-> This template requires **Azure Developer CLI (azd) version 1.18.0 or higher**. [Download azd here](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd).
+### GitHub Codespaces
 
-### Steps
+You can run this repo virtually by using GitHub Codespaces, which will open a web-based VS Code in your browser:
 
-1. Click **Open in GitHub Codespaces** (or **Dev Containers**) above
-2. Wait for the environment to load
-3. Sign in: `azd auth login`
-4. Deploy: `azd up`
-5. Follow prompts to select subscription and region
+[![Open in GitHub Codespaces](https://img.shields.io/static/v1?style=for-the-badge&label=GitHub+Codespaces&message=Open&color=brightgreen&logo=github)](https://codespaces.new/<org>/<repo>)
 
-**After deployment, try these [sample questions](./docs/sample_questions.md).**
+Once the codespace opens (this may take several minutes), open a terminal window and proceed to [Deploying](#deploying).
+
+### VS Code Dev Containers
+
+A related option is VS Code Dev Containers, which will open the project in your local VS Code using the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers):
+
+1. Start Docker Desktop (install it if not already installed)
+2. Open the project:
+
+    [![Open in Dev Containers](https://img.shields.io/static/v1?style=for-the-badge&label=Dev%20Containers&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/<org>/<repo>)
+
+3. In the VS Code window that opens, once the project files show up (this may take several minutes), open a terminal window and proceed to [Deploying](#deploying).
+
+### Local Environment
+
+1. Install the required tools:
+
+    - [Azure Developer CLI (azd)](https://aka.ms/azure-dev/install) — version 1.18.0 or higher
+    - [Python 3.10+](https://www.python.org/downloads/) (or Node.js 20+ for TypeScript templates)
+    - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (for containerized deployments)
+    - [Git](https://git-scm.com/downloads)
+
+2. Clone and enter the repository:
+
+    ```shell
+    git clone https://github.com/<org>/<repo>
+    cd <repo>
+    ```
+
+3. Proceed to [Deploying](#deploying).
+
+## Deploying
+
+1. Login to your Azure account:
+
+    ```shell
+    azd auth login
+    ```
+
+    For GitHub Codespaces users, if the previous command fails, try:
+
+    ```shell
+    azd auth login --use-device-code
+    ```
+
+2. Create a new azd environment:
+
+    ```shell
+    azd env new
+    ```
+
+    Enter a name that will be used for the resource group. This will create a new folder in `.azure/` and set it as the active environment.
+
+3. (Optional) Customize the deployment by setting environment variables:
+
+    ```shell
+    azd env set AZURE_OPENAI_MODEL gpt-4o
+    azd env set AZURE_LOCATION westus2
+    ```
+
+    See [Configurable deployment settings](#configurable-deployment-settings) below for all options.
+
+4. Run `azd up` — This provisions Azure resources and deploys the application:
+
+    ```shell
+    azd up
+    ```
+
+    - You will be prompted to select a subscription and location.
+    - ⚠️ Resources created by this command will incur costs immediately. Run `azd down` to remove them when done.
+    - Deployment typically takes 5-10 minutes.
+
+5. After deployment completes, the app URL will be printed to the console. Click it to open the app.
+
+> [!NOTE]
+> It may take 2-5 minutes after deployment for the app to be fully ready. If you see an error page, wait and refresh.
+
+### Deploying again
+
+If you've only changed application code:
+
+```shell
+azd deploy
+```
+
+If you've changed infrastructure (`infra/` folder or `azure.yaml`):
+
+```shell
+azd up
+```
 
 ### Configurable deployment settings
 
 | Setting | Description | Default |
 |---------|-------------|---------|
+| `AZURE_LOCATION` | Azure region for all resources | eastus2 |
 | `AZURE_OPENAI_MODEL` | The chat model to deploy | gpt-4o-mini |
-| <...all configurable env vars...> |
+| <...list ALL configurable env vars with description and default...> |
 
 ## Local Development
 
-See [docs/local_development.md](./docs/local_development.md) for instructions on running the application locally.
+1. Ensure you have deployed the app at least once with `azd up` (needed for Azure resource configuration).
+
+2. Run `azd auth login` if you haven't logged in recently.
+
+3. Restore the local environment configuration:
+
+    ```shell
+    azd env get-values > src/.env
+    ```
+
+4. Install dependencies:
+
+    ```shell
+    pip install -e src
+    pip install -r requirements-dev.txt
+    ```
+
+5. Start the development server:
+
+    **Linux/macOS:**
+    ```shell
+    cd src && uvicorn api.main:create_app --factory --reload --port 50505
+    ```
+
+    **Windows (PowerShell):**
+    ```powershell
+    cd src; uvicorn api.main:create_app --factory --reload --port 50505
+    ```
+
+6. Open http://localhost:50505 in your browser.
 
 ## Resource Clean-up
 
@@ -306,10 +439,20 @@ azd down
 
 ### Costs
 
-- **Azure AI Foundry**: Free tier. [Pricing](https://azure.microsoft.com/pricing/details/ai-studio/)
-- **Azure OpenAI**: S0 tier, defaults to gpt-4o-mini. [Pricing](https://azure.microsoft.com/pricing/details/cognitive-services/)
-- **Azure Container Apps**: Consumption tier. [Pricing](https://azure.microsoft.com/pricing/details/container-apps/)
-- <...list ALL deployed resources with tier + pricing link...>
+Pricing varies per region and usage, so it isn't possible to predict exact costs for your usage. However, you can use the [Azure pricing calculator](https://azure.com/e/placeholder) for the resources below.
+
+| Product | Description | SKU/Tier | Pricing |
+|---------|-------------|----------|---------|
+| [Azure AI Foundry](https://learn.microsoft.com/azure/ai-foundry/) | AI development platform + project | Standard | [Pricing](https://azure.microsoft.com/pricing/details/ai-studio/) |
+| [Azure OpenAI](https://learn.microsoft.com/azure/ai-services/openai/) | LLM inference (gpt-4o-mini default) | S0 Standard | [Pricing](https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/) |
+| [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/) | Application hosting | Consumption (pay per use) | [Pricing](https://azure.microsoft.com/pricing/details/container-apps/) |
+| [Azure Container Registry](https://learn.microsoft.com/azure/container-registry/) | Docker image storage | Basic | [Pricing](https://azure.microsoft.com/pricing/details/container-registry/) |
+| [Azure Monitor](https://learn.microsoft.com/azure/azure-monitor/) | Application Insights + Log Analytics | Pay-as-you-go | [Pricing](https://azure.microsoft.com/pricing/details/monitor/) |
+| <...list ALL deployed resources — one row per resource provisioned in Bicep...> |
+
+> To reduce costs, you can switch to free SKUs for various services (where available), but those SKUs have limitations. See [docs/deploy_customization.md](./docs/deploy_customization.md) for details.
+
+⚠️ To avoid unnecessary costs, remember to run `azd down` when you're done with the app.
 
 ### Security guidelines
 
@@ -358,24 +501,42 @@ Solution overview
 <1-2 paragraphs describing the technical solution and what it enables>
 
 ### Solution architecture
-|![image](./docs/images/readme/architecture.png)|
-|---|
 
-<Brief architecture narrative — data flow left to right>
-
-### Flow Diagram
+> **Note:** Use a Mermaid flowchart diagram directly in the README as the architecture diagram. Do NOT reference PNG files that don't exist.
 
 ```mermaid
 flowchart LR
-    User([User]) --> Frontend[Frontend<br/>React SPA]
-    Frontend --> Backend[Backend<br/>FastAPI]
-    Backend --> AI[Azure OpenAI<br/>gpt-4o-mini]
-    Backend --> DB[(Data Store)]
-    AI --> Backend
-    Backend --> Frontend
+    subgraph User Layer
+        User([👤 User])
+    end
+    subgraph Application["Application Layer"]
+        Frontend[React Frontend<br/>Static Web App]
+        Backend[FastAPI Backend<br/>Container Apps]
+    end
+    subgraph AI["Azure AI Services"]
+        OpenAI[Azure OpenAI<br/>gpt-4o-mini]
+        Search[Azure AI Search]
+    end
+    subgraph Data["Data Layer"]
+        Storage[(Blob Storage)]
+        DB[(Cosmos DB)]
+    end
+    subgraph Ops["Operations"]
+        Monitor[App Insights]
+    end
+
+    User --> Frontend
+    Frontend --> Backend
+    Backend --> OpenAI
+    Backend --> Search
+    Search --> Storage
+    Backend --> DB
+    Backend --> Monitor
 ```
 
-<Customize this flow diagram to show the ACTUAL end-to-end data flow. Use left-to-right layout. Show all Azure services as labeled nodes. Use arrow labels for key operations. Add subgraphs to group related components (e.g., "Azure AI Services", "Data Layer").>
+<IMPORTANT: Customize to match ACTUAL services. Every Azure resource from Bicep MUST appear here.>
+
+<Brief architecture narrative — data flow left to right>
 
 ### Key features
 <details open>
@@ -428,9 +589,11 @@ Quick deploy
   | Product | Description | Tier | Cost |
   |---|---|---|---|
   | [Azure AI Foundry](https://learn.microsoft.com/azure/ai-foundry/) | AI development platform | Standard | [Pricing](https://azure.microsoft.com/pricing/details/ai-studio/) |
-  | [Azure OpenAI](https://learn.microsoft.com/azure/ai-services/openai/) | LLM inference | S0 | [Pricing](https://azure.microsoft.com/pricing/details/cognitive-services/) |
-  | [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/) | Application hosting | Consumption | [Pricing](https://azure.microsoft.com/pricing/details/container-apps/) |
-  | <...all deployed resources...> |
+  | [Azure OpenAI](https://learn.microsoft.com/azure/ai-services/openai/) | LLM inference (gpt-4o-mini default) | S0 Standard | [Pricing](https://azure.microsoft.com/pricing/details/cognitive-services/openai-service/) |
+  | [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/) | Application hosting | Consumption (pay per use) | [Pricing](https://azure.microsoft.com/pricing/details/container-apps/) |
+  | [Azure Container Registry](https://learn.microsoft.com/azure/container-registry/) | Docker image storage | Basic | [Pricing](https://azure.microsoft.com/pricing/details/container-registry/) |
+  | [Azure Monitor](https://learn.microsoft.com/azure/azure-monitor/) | App Insights + Log Analytics | Pay-as-you-go | [Pricing](https://azure.microsoft.com/pricing/details/monitor/) |
+  | <...list ALL deployed resources — one row per resource provisioned in Bicep...> |
 
   ⚠️ To avoid unnecessary costs, run `azd down` when done.
 </details>
@@ -507,15 +670,16 @@ See [DISCLAIMER.md](./DISCLAIMER.md) for full disclaimer text including export c
 
 **Common elements both styles MUST include:**
 1. AI responsibility note (verbatim link to Agent Service + Agent Framework transparency docs)
-2. Architecture diagram reference (`docs/images/architecture.png` or `docs/images/readme/architecture.png`)
+2. **Mermaid architecture diagram** (flowchart with subgraphs) — do NOT reference PNG files that don't exist. The Mermaid diagram IS the architecture diagram.
 3. **Mermaid flow diagram** showing the complete data flow through all components (left-to-right, quick to scan)
-4. Codespaces + Dev Containers badge table
-5. azd version requirement (1.18.0+)
-6. **Clear, copy-pasteable deployment commands** (prerequisites, deploy, local dev, teardown)
-7. Costs section listing ALL deployed resources with pricing links
-8. ⚠️ `azd down` reminder
-9. Managed Identity security note
-10. Disclaimers section
+4. Codespaces + Dev Containers + Local environment setup (3 options, with detailed steps for each)
+5. **Detailed deployment steps** with exact `azd` commands (auth login, env new, env set, up) — not just "run azd up"
+6. **Costs table** with columns: Product | Description | SKU/Tier | Pricing link — one row per Azure resource
+7. **Local development section** with full step-by-step (install deps, copy .env, run server command)
+8. azd version requirement (1.18.0+)
+9. ⚠️ `azd down` reminder
+10. Managed Identity security note
+11. Disclaimers section
 
 **Supporting docs to also generate:**
 - `docs/TRANSPARENCY_FAQ.md` — Responsible AI FAQ (always generate)
