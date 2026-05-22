@@ -25,5 +25,25 @@
   "defaultConfig": {
     "sku": "standard",
     "enableRbacAuthorization": true
+  },
+  "integration": {
+    "authMethod": "managed-identity",
+    "authNote": "Use DefaultAzureCredential with Key Vault Secrets User role. RBAC authorization must be enabled (not access policies). Vault URI is the only config needed.",
+    "appSettings": [
+      { "name": "AZURE_KEY_VAULT_NAME", "bicepValue": "keyVault.outputs.keyVaultName", "description": "Key Vault name (SDK constructs URI as https://{name}.vault.azure.net/)" }
+    ],
+    "bicepWiring": {
+      "resource": "resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {\n  name: keyVaultName\n  location: location\n  properties: {\n    sku: { family: 'A', name: 'standard' }\n    tenantId: subscription().tenantId\n    enableRbacAuthorization: true\n    enableSoftDelete: true\n    softDeleteRetentionInDays: 7\n  }\n}",
+      "storeSecret": "resource secret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {\n  parent: keyVault\n  name: 'my-secret'\n  properties: { value: secretValue }\n}",
+      "note": "Prefer managed identity over Key Vault where possible. Only use Key Vault for: third-party API keys, connection strings for services without RBAC support, certificates."
+    },
+    "sdkInitPattern": {
+      "python": "from azure.keyvault.secrets import SecretClient\nfrom azure.identity import DefaultAzureCredential\n\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))\nvault_url = f\"https://{os.environ['AZURE_KEY_VAULT_NAME']}.vault.azure.net\"\nclient = SecretClient(vault_url=vault_url, credential=credential)\n\nsecret = client.get_secret('my-secret')\nvalue = secret.value",
+      "typescript": "import { SecretClient } from '@azure/keyvault-secrets';\nimport { DefaultAzureCredential } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential();\nconst url = `https://${process.env.AZURE_KEY_VAULT_NAME}.vault.azure.net`;\nconst client = new SecretClient(url, credential);\n\nconst secret = await client.getSecret('my-secret');\nconst value = secret.value;"
+    },
+    "healthCheck": {
+      "python": "client.list_properties_of_secrets(max_page_size=1)",
+      "description": "List secrets (just properties) validates connectivity and RBAC"
+    }
   }
 }

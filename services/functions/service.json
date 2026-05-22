@@ -1,0 +1,68 @@
+{
+  "name": "functions",
+  "displayName": "Azure Functions",
+  "category": "compute",
+  "description": "Serverless event-driven compute for background processing, triggers, and microservices",
+  "bicep": {
+    "modulePath": "modules/functions.bicep",
+    "parameters": ["functionAppName", "appServicePlanName", "storageAccountName", "managedIdentityName", "runtime", "appSettings"],
+    "outputs": ["functionAppName", "functionAppUrl", "managedIdentityPrincipalId"]
+  },
+  "environmentVariables": [],
+  "dependencies": {
+    "python": ["azure-functions>=1.17.0"],
+    "typescript": ["@azure/functions"]
+  },
+  "roleAssignments": [],
+  "defaultConfig": {
+    "runtime": "python",
+    "runtimeVersion": "3.11",
+    "sku": "Y1",
+    "tier": "Dynamic",
+    "note": "Consumption plan (Y1) for event-driven workloads — pay per execution. Use EP1 (Elastic Premium) for VNet integration or pre-warmed instances."
+  },
+  "skuOptions": {
+    "Y1": { "tier": "Dynamic", "note": "Consumption — pay per execution, cold starts, free grant of 1M executions/month" },
+    "EP1": { "tier": "ElasticPremium", "note": "Pre-warmed, VNet, unlimited execution, ~$175/month minimum" },
+    "B1": { "tier": "Basic", "note": "Dedicated plan (shared with App Service), always-on, ~$13/month" }
+  },
+  "triggers": [
+    "HTTP",
+    "Timer (CRON)",
+    "Blob Storage",
+    "Queue Storage",
+    "Service Bus",
+    "Event Grid",
+    "Cosmos DB change feed"
+  ],
+  "integration": {
+    "identityType": "UserAssigned",
+    "identityNote": "Functions use managed identity same as App Service. Storage account is required for function runtime (even with managed identity, the host needs AzureWebJobsStorage).",
+    "appSettings": [
+      { "name": "AzureWebJobsStorage__accountName", "bicepValue": "storage.outputs.storageAccountName", "description": "Storage account for Functions runtime (uses identity-based connection)" },
+      { "name": "FUNCTIONS_EXTENSION_VERSION", "bicepValue": "'~4'", "description": "Functions runtime version" },
+      { "name": "FUNCTIONS_WORKER_RUNTIME", "bicepValue": "'python'", "description": "Language runtime" }
+    ],
+    "bicepWiring": {
+      "storageConnection": "For Functions v4+ with managed identity, use 'AzureWebJobsStorage__accountName' (no connection string). Assign 'Storage Blob Data Owner' + 'Storage Queue Data Contributor' + 'Storage Table Data Contributor' to the managed identity on the storage account.",
+      "requiredStorageRoles": [
+        { "role": "Storage Blob Data Owner", "roleDefinitionId": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b" },
+        { "role": "Storage Queue Data Contributor", "roleDefinitionId": "974c5e8b-45b9-4653-ba55-5f855dd0fb88" },
+        { "role": "Storage Table Data Contributor", "roleDefinitionId": "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3" }
+      ],
+      "triggerBindings": {
+        "serviceBus": "{\n  \"type\": \"serviceBusTrigger\",\n  \"direction\": \"in\",\n  \"name\": \"msg\",\n  \"queueName\": \"%AZURE_SERVICE_BUS_QUEUE_NAME%\",\n  \"connection\": \"ServiceBusConnection\"\n}\n// In app settings: ServiceBusConnection__fullyQualifiedNamespace = mynamespace.servicebus.windows.net",
+        "cosmosDbChangeFeed": "{\n  \"type\": \"cosmosDBTrigger\",\n  \"direction\": \"in\",\n  \"name\": \"documents\",\n  \"databaseName\": \"%AZURE_COSMOS_DATABASE%\",\n  \"containerName\": \"%AZURE_COSMOS_CONTAINER%\",\n  \"connection\": \"CosmosDBConnection\",\n  \"leaseContainerName\": \"leases\"\n}\n// In app settings: CosmosDBConnection__accountEndpoint = https://myaccount.documents.azure.com:443/",
+        "blobTrigger": "{\n  \"type\": \"blobTrigger\",\n  \"direction\": \"in\",\n  \"name\": \"blob\",\n  \"path\": \"uploads/{name}\",\n  \"connection\": \"AzureWebJobsStorage\"\n}"
+      }
+    },
+    "sdkInitPattern": {
+      "python": "# function_app.py (Python v2 model)\nimport azure.functions as func\nfrom azure.identity import DefaultAzureCredential\n\napp = func.FunctionApp()\n\n@app.function_name('process_order')\n@app.service_bus_queue_trigger(arg_name='msg', queue_name='orders', connection='ServiceBusConnection')\ndef process_order(msg: func.ServiceBusMessage):\n    body = msg.get_body().decode('utf-8')\n    # Process the message...",
+      "typescript": "import { app, InvocationContext, ServiceBusQueueTrigger } from '@azure/functions';\n\napp.serviceBusQueue('processOrder', {\n  queueName: 'orders',\n  connection: 'ServiceBusConnection',\n  handler: async (message: unknown, context: InvocationContext) => {\n    context.log('Processing:', message);\n  }\n});"
+    },
+    "connectsTo": {
+      "description": "Functions connect to downstream services same as App Service — via managed identity + environment variables. Additionally, trigger connections use __fullyQualifiedNamespace or __accountEndpoint suffix pattern for identity-based triggers.",
+      "triggerConnectionPattern": "For identity-based trigger connections (no connection strings):\n- Service Bus: ServiceBusConnection__fullyQualifiedNamespace\n- Cosmos DB: CosmosDBConnection__accountEndpoint\n- Storage: AzureWebJobsStorage__accountName\n- Event Grid: uses push model (no pull trigger)"
+    }
+  }
+}

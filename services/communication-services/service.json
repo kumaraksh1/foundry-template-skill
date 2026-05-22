@@ -1,0 +1,58 @@
+{
+  "name": "communication-services",
+  "displayName": "Azure Communication Services",
+  "category": "notifications",
+  "description": "Email, SMS, chat, and voice communication capabilities",
+  "bicep": {
+    "modulePath": "modules/communication-services.bicep",
+    "parameters": ["communicationServiceName", "dataLocation"],
+    "outputs": ["endpoint", "domain", "communicationServiceName"]
+  },
+  "environmentVariables": [
+    "AZURE_COMMUNICATION_ENDPOINT",
+    "AZURE_EMAIL_SENDER"
+  ],
+  "dependencies": {
+    "python": ["azure-communication-email>=1.0.0", "azure-identity>=1.17.0"],
+    "typescript": ["@azure/communication-email", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Contributor",
+      "roleDefinitionId": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+      "note": "Communication Services doesn't have a dedicated data-plane RBAC role yet; Contributor on the resource is needed for send operations"
+    }
+  ],
+  "defaultConfig": {
+    "location": "global",
+    "dataLocation": "United States",
+    "emailDomain": "AzureManagedDomain",
+    "note": "Communication Services is a global resource. Email uses Azure-managed domains (auto-verified) or custom domains (requires DNS verification)."
+  },
+  "pricingTier": {
+    "email": "First 1000 emails/month free, then $0.00025/email",
+    "sms": "$0.0075/message (US)",
+    "note": "Pay-as-you-go, no upfront commitment"
+  },
+  "integration": {
+    "authMethod": "managed-identity",
+    "authNote": "Use DefaultAzureCredential with Communication Services endpoint. Assign Contributor role on the Communication Services resource to the managed identity.",
+    "appSettings": [
+      { "name": "AZURE_COMMUNICATION_ENDPOINT", "bicepValue": "communicationServices.outputs.endpoint", "description": "Communication Services endpoint URL" },
+      { "name": "AZURE_EMAIL_SENDER", "bicepValue": "'DoNotReply@{domain}'", "description": "Sender email address from Azure-managed domain (e.g., DoNotReply@xxxxxxxx.azurecomm.net)" }
+    ],
+    "bicepWiring": {
+      "resource": "resource communicationService 'Microsoft.Communication/communicationServices@2023-04-01' = {\n  name: communicationServiceName\n  location: 'global'\n  properties: { dataLocation: dataLocation }\n}",
+      "emailService": "resource emailService 'Microsoft.Communication/emailServices@2023-04-01' = {\n  name: '${communicationServiceName}-email'\n  location: 'global'\n  properties: { dataLocation: dataLocation }\n}\n\nresource emailDomain 'Microsoft.Communication/emailServices/domains@2023-04-01' = {\n  parent: emailService\n  name: 'AzureManagedDomain'\n  location: 'global'\n  properties: { domainManagement: 'AzureManaged' }\n}",
+      "linkEmailToCommunication": "resource emailLink 'Microsoft.Communication/communicationServices/domains@2023-04-01' = {\n  // Link is done via communicationService properties.linkedDomains array\n}"
+    },
+    "sdkInitPattern": {
+      "python": "from azure.communication.email import EmailClient\nfrom azure.identity import DefaultAzureCredential\n\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))\nemail_client = EmailClient(os.environ['AZURE_COMMUNICATION_ENDPOINT'], credential)\n\n# Send email\nmessage = {\n    'senderAddress': os.environ['AZURE_EMAIL_SENDER'],\n    'recipients': {'to': [{'address': recipient, 'displayName': name}]},\n    'content': {'subject': subject, 'plainText': body}\n}\npoller = email_client.begin_send(message)\nresult = poller.result()",
+      "typescript": "import { EmailClient } from '@azure/communication-email';\nimport { DefaultAzureCredential } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential();\nconst client = new EmailClient(process.env.AZURE_COMMUNICATION_ENDPOINT!, credential);\n\nconst poller = await client.beginSend({\n  senderAddress: process.env.AZURE_EMAIL_SENDER!,\n  recipients: { to: [{ address: recipient }] },\n  content: { subject, plainText: body }\n});\nconst result = await poller.pollUntilDone();"
+    },
+    "healthCheck": {
+      "python": "# No lightweight health check available — Communication Services validates on first send",
+      "description": "Validate by sending a test email or checking the endpoint resolves"
+    }
+  }
+}

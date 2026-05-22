@@ -1,0 +1,43 @@
+{
+  "name": "static-web-app",
+  "displayName": "Azure Static Web Apps",
+  "category": "compute",
+  "description": "Hosting for static frontends (React, Angular, Vue) with integrated API backend",
+  "bicep": {
+    "modulePath": "modules/static-web-app.bicep",
+    "parameters": ["staticWebAppName", "sku"],
+    "outputs": ["staticWebAppUrl", "staticWebAppName"]
+  },
+  "environmentVariables": [],
+  "dependencies": {
+    "python": [],
+    "typescript": []
+  },
+  "roleAssignments": [],
+  "defaultConfig": {
+    "sku": "Free",
+    "note": "Free tier for most SPAs (2 custom domains, 0.5GB storage, 100GB bandwidth/month). Standard for enterprise features (~$9/month)."
+  },
+  "skuOptions": {
+    "Free": { "note": "2 custom domains, 0.5GB, 100GB/month bandwidth, free" },
+    "Standard": { "note": "5 custom domains, 2GB, 200GB/month, staging environments, ~$9/month" }
+  },
+  "integration": {
+    "identityType": "SystemAssigned",
+    "identityNote": "Static Web Apps use system-assigned managed identity for backend API functions. Frontend is static (no identity needed). API functions can access downstream services.",
+    "appSettings": [],
+    "bicepWiring": {
+      "resource": "resource staticWebApp 'Microsoft.Web/staticSites@2023-12-01' = {\n  name: staticWebAppName\n  location: location\n  sku: { name: skuName, tier: skuName }\n  properties: {\n    stagingEnvironmentPolicy: 'Enabled'\n    allowConfigFileUpdates: true\n    buildProperties: {\n      appLocation: '/'\n      apiLocation: 'api'\n      outputLocation: 'dist'\n    }\n  }\n}",
+      "linkedBackend": "// For linking to a separate Container Apps/App Service backend:\nresource linkedBackend 'Microsoft.Web/staticSites/linkedBackends@2023-12-01' = {\n  parent: staticWebApp\n  name: 'backend'\n  properties: {\n    backendResourceId: containerApp.id\n    region: location\n  }\n}",
+      "note": "Static Web Apps can either use built-in Azure Functions (api/ folder) or link to an external backend. For complex backends, link to Container Apps."
+    },
+    "connectsTo": {
+      "description": "Static Web Apps frontend calls the backend API via /api/* proxy. Backend can be: (1) built-in Azure Functions in api/ folder, or (2) linked external backend (Container Apps, App Service). For downstream Azure services, use the linked backend's managed identity.",
+      "wirePattern": "Frontend (React/Vue) → SWA proxy → Backend API → Downstream services\n\nThe frontend calls /api/* which is proxied to the backend. The backend handles auth and connects to Azure services."
+    },
+    "frontendPattern": {
+      "react": "// staticwebapp.config.json\n{\n  \"routes\": [\n    { \"route\": \"/api/*\", \"allowedRoles\": [\"authenticated\"] }\n  ],\n  \"navigationFallback\": {\n    \"rewrite\": \"/index.html\",\n    \"exclude\": [\"/api/*\", \"*.{css,js,png,svg}\"]\n  },\n  \"platform\": { \"apiRuntime\": \"python:3.11\" }\n}",
+      "note": "Include staticwebapp.config.json for routing rules, auth config, and API runtime selection"
+    }
+  }
+}

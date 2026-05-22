@@ -1,0 +1,64 @@
+{
+  "name": "postgresql",
+  "displayName": "Azure Database for PostgreSQL Flexible Server",
+  "category": "database",
+  "description": "Managed PostgreSQL with high availability, auto-scaling, and intelligent performance",
+  "bicep": {
+    "modulePath": "modules/postgresql.bicep",
+    "parameters": ["serverName", "databaseName", "administratorLogin", "administratorPassword", "skuName", "skuTier", "storageSizeGB", "version"],
+    "outputs": ["serverFqdn", "serverName", "databaseName"]
+  },
+  "environmentVariables": [
+    "AZURE_POSTGRESQL_HOST",
+    "AZURE_POSTGRESQL_DATABASE",
+    "AZURE_POSTGRESQL_USER"
+  ],
+  "dependencies": {
+    "python": ["asyncpg>=0.29.0", "sqlalchemy[asyncio]>=2.0.0", "azure-identity>=1.17.0"],
+    "typescript": ["pg", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Entra ID Authentication",
+      "note": "Use Entra ID auth with managed identity instead of passwords. Configure via serverParameters: azure.extensions = 'AZURE_AD'"
+    }
+  ],
+  "defaultConfig": {
+    "version": "16",
+    "skuName": "Standard_B1ms",
+    "skuTier": "Burstable",
+    "storageSizeGB": 32,
+    "note": "Burstable B1ms for dev (~$12/month). General Purpose D2s_v3 for production (~$100/month). Use Entra ID auth with managed identity."
+  },
+  "skuOptions": {
+    "Standard_B1ms": { "tier": "Burstable", "note": "Dev/test, 1 vCore, 2GB RAM, ~$12/month" },
+    "Standard_D2s_v3": { "tier": "GeneralPurpose", "note": "Production, 2 vCores, 8GB RAM, ~$100/month" },
+    "Standard_D4s_v3": { "tier": "GeneralPurpose", "note": "High-load, 4 vCores, 16GB RAM, ~$200/month" }
+  },
+  "integration": {
+    "authMethod": "entra-id-managed-identity",
+    "authNote": "Use Entra ID authentication with managed identity. No passwords stored. Requires enabling Azure AD extension on the server and setting the managed identity as AD admin.",
+    "appSettings": [
+      { "name": "AZURE_POSTGRESQL_HOST", "bicepValue": "postgresql.outputs.serverFqdn", "description": "Server FQDN (e.g., myserver.postgres.database.azure.com)" },
+      { "name": "AZURE_POSTGRESQL_DATABASE", "bicepValue": "postgresql.outputs.databaseName", "description": "Database name" },
+      { "name": "AZURE_POSTGRESQL_USER", "bicepValue": "managedIdentity.properties.clientId", "description": "Managed identity client ID (used as username for Entra auth)" }
+    ],
+    "bicepWiring": {
+      "enableEntraAuth": "resource pgAdAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-06-01-preview' = {\n  parent: postgresServer\n  name: managedIdentity.properties.principalId\n  properties: {\n    principalType: 'ServicePrincipal'\n    principalName: managedIdentity.name\n    tenantId: subscription().tenantId\n  }\n}",
+      "firewallRule": "resource firewallAllowAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-06-01-preview' = {\n  parent: postgresServer\n  name: 'AllowAllAzureServicesAndResourcesWithinAzureIps'\n  properties: {\n    startIpAddress: '0.0.0.0'\n    endIpAddress: '0.0.0.0'\n  }\n}",
+      "serverParameter": "resource azureAdExtension 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = {\n  parent: postgresServer\n  name: 'azure.extensions'\n  properties: { value: 'AZURE_AD', source: 'user-override' }\n}"
+    },
+    "sdkInitPattern": {
+      "python": "import asyncpg\nfrom azure.identity.aio import DefaultAzureCredential\n\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))\ntoken = await credential.get_token('https://ossrdbms-aad.database.windows.net/.default')\n\nconn = await asyncpg.connect(\n    host=os.environ['AZURE_POSTGRESQL_HOST'],\n    database=os.environ['AZURE_POSTGRESQL_DATABASE'],\n    user=os.environ['AZURE_POSTGRESQL_USER'],\n    password=token.token,\n    ssl='require'\n)",
+      "typescript": "import { DefaultAzureCredential } from '@azure/identity';\nimport { Client } from 'pg';\n\nconst credential = new DefaultAzureCredential();\nconst token = await credential.getToken('https://ossrdbms-aad.database.windows.net/.default');\n\nconst client = new Client({\n  host: process.env.AZURE_POSTGRESQL_HOST,\n  database: process.env.AZURE_POSTGRESQL_DATABASE,\n  user: process.env.AZURE_POSTGRESQL_USER,\n  password: token.token,\n  ssl: { rejectUnauthorized: true },\n  port: 5432\n});\nawait client.connect();"
+    },
+    "healthCheck": {
+      "python": "await conn.fetchval('SELECT 1')",
+      "description": "Simple query to validate connectivity"
+    },
+    "migrations": {
+      "note": "Use Alembic (Python) or node-pg-migrate (TypeScript) for schema management. Run migrations in postdeploy hook.",
+      "postdeployHook": "alembic upgrade head"
+    }
+  }
+}

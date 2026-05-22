@@ -19,5 +19,25 @@
   "roleAssignments": [],
   "defaultConfig": {
     "retentionInDays": 30
+  },
+  "integration": {
+    "authMethod": "connection-string",
+    "authNote": "App Insights uses a connection string (not a secret — it's safe to inject as env var). The string contains the instrumentation key and ingestion endpoint.",
+    "appSettings": [
+      { "name": "APPLICATIONINSIGHTS_CONNECTION_STRING", "bicepValue": "monitoring.outputs.applicationInsightsConnectionString", "description": "Connection string for App Insights SDK auto-collection" }
+    ],
+    "bicepWiring": {
+      "logAnalytics": "resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {\n  name: logAnalyticsName\n  location: location\n  properties: { retentionInDays: 30, sku: { name: 'PerGB2018' } }\n}",
+      "appInsights": "resource appInsights 'Microsoft.Insights/components@2020-02-02' = {\n  name: applicationInsightsName\n  location: location\n  kind: 'web'\n  properties: { Application_Type: 'web', WorkspaceResourceId: logAnalytics.id }\n}",
+      "containerAppsLink": "Log Analytics workspace ID is required by Container Apps environment: properties.appLogsConfiguration.logAnalyticsConfiguration.customerId"
+    },
+    "sdkInitPattern": {
+      "python": "# Auto-instrumentation (recommended for FastAPI/Flask)\nfrom azure.monitor.opentelemetry import configure_azure_monitor\n\nconfigure_azure_monitor(\n    connection_string=os.environ.get('APPLICATIONINSIGHTS_CONNECTION_STRING'),\n    enable_live_metrics=True\n)\n\n# Or manual OpenTelemetry setup for more control\nfrom opentelemetry import trace\ntracer = trace.get_tracer(__name__)",
+      "typescript": "import { useAzureMonitor } from '@azure/monitor-opentelemetry';\n\nuseAzureMonitor({\n  azureMonitorExporterOptions: {\n    connectionString: process.env.APPLICATIONINSIGHTS_CONNECTION_STRING\n  }\n});"
+    },
+    "healthCheck": {
+      "python": "# No explicit health check needed — SDK auto-collects if connection string is valid",
+      "description": "Monitor starts collecting automatically; check Azure Portal for data within 5 minutes"
+    }
   }
 }

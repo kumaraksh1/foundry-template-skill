@@ -37,5 +37,31 @@
     "chatModelName": "gpt-4o-mini",
     "chatModelVersion": "2024-07-18",
     "chatDeploymentCapacity": 30
+  },
+  "integration": {
+    "authMethod": "managed-identity",
+    "authNote": "Use DefaultAzureCredential with get_bearer_token_provider for the OpenAI Python SDK. Assign 'Cognitive Services OpenAI User' role to the managed identity.",
+    "appSettings": [
+      { "name": "AZURE_OPENAI_ENDPOINT", "bicepValue": "openai.outputs.openAiEndpoint", "description": "OpenAI resource endpoint (e.g., https://myopenai.openai.azure.com/)" },
+      { "name": "AZURE_OPENAI_DEPLOYMENT", "bicepValue": "'chat'", "description": "Model deployment name" },
+      { "name": "AZURE_OPENAI_API_VERSION", "bicepValue": "'2024-10-21'", "description": "API version for Azure OpenAI" }
+    ],
+    "bicepWiring": {
+      "resource": "resource openAi 'Microsoft.CognitiveServices/accounts@2024-10-01' = {\n  name: openAiName\n  location: location\n  kind: 'OpenAI'\n  sku: { name: 'S0' }\n  properties: {\n    customSubDomainName: openAiName\n    disableLocalAuth: true\n    publicNetworkAccess: 'Enabled'\n  }\n}",
+      "modelDeployment": "resource chatDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {\n  parent: openAi\n  name: 'chat'\n  sku: { name: 'GlobalStandard', capacity: chatDeploymentCapacity }\n  properties: {\n    model: { format: 'OpenAI', name: chatModelName, version: chatModelVersion }\n  }\n}",
+      "note": "Use GlobalStandard SKU by default (works in all regions). Add dependsOn between multiple deployments under same account to avoid conflicts."
+    },
+    "sdkInitPattern": {
+      "python": "from openai import AzureOpenAI\nfrom azure.identity import DefaultAzureCredential, get_bearer_token_provider\n\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))\ntoken_provider = get_bearer_token_provider(credential, 'https://cognitiveservices.azure.com/.default')\n\nclient = AzureOpenAI(\n    azure_endpoint=os.environ['AZURE_OPENAI_ENDPOINT'],\n    azure_ad_token_provider=token_provider,\n    api_version=os.environ.get('AZURE_OPENAI_API_VERSION', '2024-10-21')\n)\n\nresponse = client.chat.completions.create(\n    model=os.environ['AZURE_OPENAI_DEPLOYMENT'],\n    messages=[{'role': 'user', 'content': 'Hello'}]\n)",
+      "typescript": "import { AzureOpenAI } from 'openai';\nimport { DefaultAzureCredential, getBearerTokenProvider } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential();\nconst scope = 'https://cognitiveservices.azure.com/.default';\nconst azureADTokenProvider = getBearerTokenProvider(credential, scope);\n\nconst client = new AzureOpenAI({\n  endpoint: process.env.AZURE_OPENAI_ENDPOINT!,\n  azureADTokenProvider,\n  apiVersion: '2024-10-21'\n});\n\nconst response = await client.chat.completions.create({\n  model: process.env.AZURE_OPENAI_DEPLOYMENT!,\n  messages: [{ role: 'user', content: 'Hello' }]\n});"
+    },
+    "streamingPattern": {
+      "python": "# Streaming response\nstream = client.chat.completions.create(\n    model=os.environ['AZURE_OPENAI_DEPLOYMENT'],\n    messages=messages,\n    stream=True\n)\nfor chunk in stream:\n    if chunk.choices[0].delta.content:\n        yield chunk.choices[0].delta.content",
+      "description": "Use stream=True for chat UIs to get incremental token delivery"
+    },
+    "healthCheck": {
+      "python": "# List deployments to validate endpoint + auth\nclient.models.list()",
+      "description": "List models validates both endpoint connectivity and RBAC permissions"
+    }
   }
 }

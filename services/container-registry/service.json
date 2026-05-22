@@ -38,5 +38,17 @@
     "Usually bundled with container-apps module rather than deployed standalone",
     "Required when azure.yaml service has docker.remoteBuild: true",
     "The container-apps.bicep module creates both the environment AND the registry"
-  ]
+  ],
+  "integration": {
+    "authMethod": "managed-identity",
+    "authNote": "Container Apps pull images using managed identity (AcrPull role). The deploying user pushes with AcrPush. Admin user can be disabled once identity-based pull is configured.",
+    "appSettings": [
+      { "name": "AZURE_CONTAINER_REGISTRY_ENDPOINT", "bicepValue": "containerRegistry.properties.loginServer", "description": "ACR login server (e.g., myregistry.azurecr.io)" }
+    ],
+    "bicepWiring": {
+      "resource": "resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {\n  name: containerRegistryName\n  location: location\n  sku: { name: 'Basic' }\n  properties: {\n    adminUserEnabled: true\n    anonymousPullEnabled: false\n  }\n}",
+      "identityPull": "// Assign AcrPull to the managed identity so Container Apps can pull images\nresource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {\n  scope: containerRegistry\n  name: guid(containerRegistry.id, managedIdentity.id, acrPullRoleId)\n  properties: {\n    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')\n    principalId: managedIdentity.properties.principalId\n    principalType: 'ServicePrincipal'\n  }\n}",
+      "note": "adminUserEnabled: true is needed for azd deploy remoteBuild. Once CI/CD uses service principal, can disable admin."
+    }
+  }
 }

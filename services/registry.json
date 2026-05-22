@@ -1,6 +1,6 @@
 {
-  "version": "1.1.0",
-  "lastUpdated": "2026-05-19",
+  "version": "2.0.0",
+  "lastUpdated": "2026-05-22",
   "services": {
     "ai-foundry": {
       "path": "services/ai-foundry",
@@ -19,31 +19,77 @@
       "category": "ai",
       "required": false
     },
+    "app-service": {
+      "path": "services/app-service",
+      "category": "compute",
+      "required": false,
+      "note": "Simpler hosting with fixed pricing. Use for straightforward web apps without containerization needs."
+    },
     "container-apps": {
       "path": "services/container-apps",
       "category": "compute",
-      "required": false
+      "required": false,
+      "note": "Serverless containers with auto-scale. Best for microservices and variable-load apps."
     },
     "static-web-app": {
       "path": "services/static-web-app",
       "category": "compute",
-      "required": false
+      "required": false,
+      "note": "Best for React/Angular/Vue SPAs with optional API backend."
+    },
+    "functions": {
+      "path": "services/functions",
+      "category": "compute",
+      "required": false,
+      "note": "Event-driven serverless. Use for background processing, timers, queue triggers."
     },
     "cosmos-db": {
       "path": "services/cosmos-db",
       "category": "database",
-      "required": false
+      "required": false,
+      "note": "Flexible schema NoSQL. Serverless mode is cheapest for variable workloads."
+    },
+    "postgresql": {
+      "path": "services/postgresql",
+      "category": "database",
+      "required": false,
+      "note": "Relational DB for complex queries, joins, transactions. Use Entra ID auth with managed identity."
+    },
+    "redis": {
+      "path": "services/redis",
+      "category": "cache",
+      "required": false,
+      "note": "In-memory cache for sessions, rate limiting, real-time data. Use Entra ID auth."
     },
     "storage": {
       "path": "services/storage",
       "category": "storage",
       "required": false,
-      "note": "Bundled inside ai-foundry module when using Foundry. Add separately for standalone blob scenarios."
+      "note": "Blob storage for files, documents, media. Bundled inside ai-foundry when using Foundry."
+    },
+    "communication-services": {
+      "path": "services/communication-services",
+      "category": "notifications",
+      "required": false,
+      "note": "Email, SMS, chat. First 1000 emails/month free. Global resource (no region restriction)."
+    },
+    "service-bus": {
+      "path": "services/service-bus",
+      "category": "messaging",
+      "required": false,
+      "note": "Enterprise messaging for async workflows, queues, pub/sub topics."
+    },
+    "event-grid": {
+      "path": "services/event-grid",
+      "category": "messaging",
+      "required": false,
+      "note": "Event routing for reactive architectures. First 100K events/month free."
     },
     "monitoring": {
       "path": "services/monitoring",
       "category": "observability",
-      "required": true
+      "required": true,
+      "note": "Always included. App Insights + Log Analytics."
     },
     "keyvault": {
       "path": "services/keyvault",
@@ -55,23 +101,30 @@
       "path": "services/container-registry",
       "category": "compute",
       "required": false,
-      "note": "Required when using Container Apps with docker remoteBuild. Bundled in container-apps module."
+      "note": "Required when using Container Apps with docker remoteBuild."
     }
   },
   "scenarioDefaults": {
     "rag-chatbot": ["ai-foundry", "ai-search", "container-apps", "container-registry", "monitoring"],
     "multi-agent": ["ai-foundry", "container-apps", "container-registry", "monitoring"],
-    "api-backend": ["ai-foundry", "container-apps", "container-registry", "monitoring"],
-    "full-stack-app": ["ai-foundry", "container-apps", "static-web-app", "container-registry", "monitoring"],
-    "data-pipeline": ["ai-foundry", "storage", "cosmos-db", "monitoring"],
+    "api-backend": ["container-apps", "container-registry", "cosmos-db", "monitoring"],
+    "full-stack-app": ["container-apps", "container-registry", "cosmos-db", "monitoring"],
+    "crud-app": ["app-service", "cosmos-db", "monitoring"],
+    "workflow-app": ["app-service", "cosmos-db", "communication-services", "monitoring"],
+    "event-driven": ["functions", "service-bus", "cosmos-db", "storage", "monitoring"],
+    "data-pipeline": ["functions", "storage", "cosmos-db", "monitoring"],
     "simple-chat": ["ai-foundry", "container-apps", "container-registry", "monitoring"]
   },
   "scenarioNotes": {
-    "rag-chatbot": "ai-foundry module handles storage internally; ai-search is conditional (useSearchService flag)",
+    "rag-chatbot": "ai-foundry module handles storage internally; ai-search is conditional",
     "multi-agent": "ai-foundry includes storage + models; add cosmos-db if conversation history needed",
-    "api-backend": "Add cosmos-db or storage depending on persistence needs",
-    "full-stack-app": "Frontend served from Static Web App or bundled in Container App",
-    "data-pipeline": "No container apps needed — uses batch processing or Functions",
-    "simple-chat": "Minimal template — just AI + hosting + monitoring"
+    "api-backend": "Add AI services only if the API needs AI capabilities",
+    "full-stack-app": "Add static-web-app if frontend is decoupled from backend",
+    "crud-app": "Simplest architecture — App Service + database + monitoring. No AI, no containers.",
+    "workflow-app": "CRUD + notifications. Add service-bus if async processing needed.",
+    "event-driven": "Functions + messaging. Add AI services if event processing needs AI.",
+    "data-pipeline": "Batch or stream processing. No web frontend needed.",
+    "simple-chat": "Minimal AI template — just AI + hosting + monitoring"
   }
 }
+

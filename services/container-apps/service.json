@@ -21,5 +21,27 @@
     "maxReplicas": 10,
     "targetPort": 50505,
     "targetPortNote": "Python+Gunicorn templates typically use 50505; Node/TS may use 3000 or 8080. Match the app's Dockerfile EXPOSE port."
+  },
+  "integration": {
+    "identityType": "UserAssigned",
+    "identityNote": "Container Apps support user-assigned managed identity. Pass identity resource ID and client ID as env vars to the container.",
+    "appSettings": [
+      { "name": "AZURE_CLIENT_ID", "bicepValue": "managedIdentity.properties.clientId", "description": "Managed identity client ID — used by DefaultAzureCredential to pick the right identity" }
+    ],
+    "bicepWiring": {
+      "identityAssignment": "identity: {\n  type: 'UserAssigned'\n  userAssignedIdentities: { '${managedIdentity.id}': {} }\n}",
+      "envVarsInjection": "env: [\n  { name: 'AZURE_CLIENT_ID', value: managedIdentity.properties.clientId }\n  { name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.outputs.cosmosEndpoint }\n  { name: 'AZURE_OPENAI_ENDPOINT', value: openai.outputs.openAiEndpoint }\n  // ... inject ALL downstream service endpoints here\n]",
+      "registryAuth": "registries: [\n  {\n    server: containerRegistry.properties.loginServer\n    identity: managedIdentity.id\n  }\n]",
+      "scaleRule": "scale: {\n  minReplicas: 0\n  maxReplicas: 10\n  rules: [{\n    name: 'http-scaling'\n    http: { metadata: { concurrentRequests: '50' } }\n  }]\n}",
+      "note": "Container Apps get their config via env vars injected in the Bicep template array. Every downstream service endpoint/name must be in this array."
+    },
+    "connectsTo": {
+      "description": "Container Apps connect to downstream services via managed identity + injected env vars. The Bicep template's `env` array in the container config is where ALL service endpoints are wired.",
+      "wirePattern": "For each downstream service:\n1. Provision the service (Cosmos, Redis, OpenAI, etc.)\n2. Create RBAC role assignment: service → managedIdentity.principalId\n3. Add service endpoint to Container App's env array\n4. App code reads env var and uses DefaultAzureCredential(managed_identity_client_id=AZURE_CLIENT_ID)"
+    },
+    "sdkInitPattern": {
+      "python": "from azure.identity import DefaultAzureCredential\n\n# DefaultAzureCredential uses AZURE_CLIENT_ID env var to select the user-assigned identity\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))",
+      "typescript": "import { DefaultAzureCredential } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential({\n  managedIdentityClientId: process.env.AZURE_CLIENT_ID\n});"
+    }
   }
 }

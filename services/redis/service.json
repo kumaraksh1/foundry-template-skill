@@ -1,0 +1,57 @@
+{
+  "name": "redis",
+  "displayName": "Azure Cache for Redis",
+  "category": "cache",
+  "description": "In-memory data store for caching, session management, and real-time messaging",
+  "bicep": {
+    "modulePath": "modules/redis.bicep",
+    "parameters": ["redisName", "skuName", "skuFamily", "skuCapacity"],
+    "outputs": ["redisHostName", "redisPort", "redisId"]
+  },
+  "environmentVariables": [
+    "AZURE_REDIS_HOST",
+    "AZURE_REDIS_PORT"
+  ],
+  "dependencies": {
+    "python": ["redis>=5.0.0", "azure-identity>=1.17.0"],
+    "typescript": ["ioredis", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "Redis Cache Contributor",
+      "roleDefinitionId": "e0f68234-74aa-48ed-b826-c38b57376e17",
+      "note": "Use Entra ID auth (access keys disabled) with managed identity"
+    }
+  ],
+  "defaultConfig": {
+    "skuName": "Basic",
+    "skuFamily": "C",
+    "skuCapacity": 0,
+    "note": "Basic C0 for dev/test (~$16/month, 250MB). Standard C1 for production (~$50/month, 1GB, replication). Premium for VNet + clustering."
+  },
+  "skuOptions": {
+    "Basic_C0": { "note": "Dev/test, 250MB, no SLA, ~$16/month" },
+    "Standard_C1": { "note": "Production, 1GB, replication, 99.9% SLA, ~$50/month" },
+    "Premium_P1": { "note": "Enterprise, 6GB, VNet, clustering, geo-replication, ~$225/month" }
+  },
+  "integration": {
+    "authMethod": "entra-id-managed-identity",
+    "authNote": "Use Entra ID auth with access keys disabled. Requires redisConfiguration.aad-enabled = 'true' and Data Owner role assignment.",
+    "appSettings": [
+      { "name": "AZURE_REDIS_HOST", "bicepValue": "redis.outputs.redisHostName", "description": "Redis hostname (e.g., myredis.redis.cache.windows.net)" },
+      { "name": "AZURE_REDIS_PORT", "bicepValue": "'6380'", "description": "SSL port (always 6380 for Azure Redis)" }
+    ],
+    "bicepWiring": {
+      "disableAccessKeys": "properties: {\n  sku: { name: skuName, family: skuFamily, capacity: skuCapacity }\n  enableNonSslPort: false\n  minimumTlsVersion: '1.2'\n  redisConfiguration: { 'aad-enabled': 'true' }\n  disableAccessKeyAuthentication: true\n}",
+      "roleAssignment": "Use role 'Redis Cache Data Owner' (roleDefinitionId: '8dd8a07b-5d86-4a8e-a01c-5a7c90a69bdf') for full read/write. Use 'Redis Cache Data Contributor' for read + write without admin."
+    },
+    "sdkInitPattern": {
+      "python": "import redis.asyncio as aioredis\nfrom azure.identity import DefaultAzureCredential\n\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))\ntoken = credential.get_token('https://redis.azure.com/.default')\n\nclient = aioredis.Redis(\n    host=os.environ['AZURE_REDIS_HOST'],\n    port=int(os.environ['AZURE_REDIS_PORT']),\n    username=os.environ.get('AZURE_CLIENT_ID'),\n    password=token.token,\n    ssl=True,\n    decode_responses=True\n)",
+      "typescript": "import Redis from 'ioredis';\nimport { DefaultAzureCredential } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential();\nconst token = await credential.getToken('https://redis.azure.com/.default');\n\nconst client = new Redis({\n  host: process.env.AZURE_REDIS_HOST!,\n  port: 6380,\n  username: process.env.AZURE_CLIENT_ID,\n  password: token.token,\n  tls: { servername: process.env.AZURE_REDIS_HOST }\n});"
+    },
+    "healthCheck": {
+      "python": "await client.ping()",
+      "description": "PING command validates connectivity and auth"
+    }
+  }
+}

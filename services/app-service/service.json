@@ -1,0 +1,50 @@
+{
+  "name": "app-service",
+  "displayName": "Azure App Service",
+  "category": "compute",
+  "description": "Managed web hosting with built-in CI/CD, auto-scaling, and custom domains",
+  "bicep": {
+    "modulePath": "modules/appservice.bicep",
+    "parameters": ["appServicePlanName", "webAppName", "managedIdentityName", "linuxFxVersion", "appSettings"],
+    "outputs": ["webAppName", "webAppUrl", "managedIdentityPrincipalId", "managedIdentityClientId"]
+  },
+  "environmentVariables": [],
+  "dependencies": {
+    "python": ["gunicorn>=22.0.0"],
+    "typescript": []
+  },
+  "roleAssignments": [],
+  "defaultConfig": {
+    "sku": "B1",
+    "tier": "Basic",
+    "kind": "linux",
+    "linuxFxVersion": "PYTHON|3.13",
+    "alwaysOn": true,
+    "targetPort": 50505,
+    "appCommandLine": "gunicorn api.main:create_app",
+    "note": "B1 for dev/low scale, P1v3 for production high-scale. Linux recommended for Python/Node."
+  },
+  "skuOptions": {
+    "F1": { "tier": "Free", "note": "Free, 60min/day CPU, no custom domains, no always-on" },
+    "B1": { "tier": "Basic", "note": "Dev/test, 1 core, 1.75GB RAM, custom domains, ~$13/month" },
+    "S1": { "tier": "Standard", "note": "Production, auto-scale, staging slots, ~$70/month" },
+    "P1v3": { "tier": "PremiumV3", "note": "High-performance, zone redundancy, ~$138/month" }
+  },
+  "integration": {
+    "identityType": "UserAssigned",
+    "identityNote": "Create a user-assigned managed identity. Assign it to the web app AND grant it RBAC on all downstream services.",
+    "bicepPattern": {
+      "managedIdentity": "resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {\n  name: managedIdentityName\n  location: location\n}",
+      "assignToWebApp": "identity: {\n  type: 'UserAssigned'\n  userAssignedIdentities: { '${managedIdentity.id}': {} }\n}",
+      "appSettingsInjection": "Use siteConfig.appSettings array to inject all downstream service endpoints as env vars. Example:\nappSettings: [\n  { name: 'AZURE_CLIENT_ID', value: managedIdentity.properties.clientId }\n  { name: 'AZURE_COSMOS_ENDPOINT', value: cosmosDb.outputs.cosmosEndpoint }\n  { name: 'AZURE_REDIS_HOST', value: redis.outputs.redisHostName }\n]"
+    },
+    "connectsTo": {
+      "description": "App Service connects to downstream services via managed identity + env vars. For each downstream service, the Bicep must: (1) pass managedIdentityPrincipalId to the service's role assignment, (2) inject the service endpoint URL as an app setting.",
+      "wirePattern": "For each service in the template:\n1. Provision the service (Cosmos, Redis, Storage, etc.)\n2. Create RBAC role assignment: service → managedIdentity.principalId\n3. Inject the service's endpoint into App Service appSettings\n4. App code reads env var and uses DefaultAzureCredential"
+    },
+    "sdkInitPattern": {
+      "python": "from azure.identity import DefaultAzureCredential\n\n# DefaultAzureCredential picks up the managed identity automatically\n# Set AZURE_CLIENT_ID app setting to the managed identity client ID\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))",
+      "typescript": "import { DefaultAzureCredential } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential({\n  managedIdentityClientId: process.env.AZURE_CLIENT_ID\n});"
+    }
+  }
+}

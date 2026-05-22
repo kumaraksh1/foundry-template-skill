@@ -21,12 +21,34 @@
     {
       "role": "Cosmos DB Built-in Data Contributor",
       "roleDefinitionId": "00000000-0000-0000-0000-000000000002",
-      "note": "This is a Cosmos DB data-plane role, assigned via Cosmos DB RBAC (not ARM)"
+      "note": "This is a Cosmos DB data-plane role, assigned via Cosmos DB RBAC (not ARM). Use sqlRoleAssignment resource, not standard roleAssignments."
     }
   ],
   "defaultConfig": {
     "databaseName": "app-db",
     "containerName": "items",
     "partitionKeyPath": "/id"
+  },
+  "integration": {
+    "authMethod": "managed-identity",
+    "authNote": "Use DefaultAzureCredential with Cosmos DB RBAC. No connection strings needed. Cosmos RBAC uses sqlRoleAssignment (not ARM role assignments).",
+    "appSettings": [
+      { "name": "AZURE_COSMOS_ENDPOINT", "bicepValue": "cosmosDb.outputs.cosmosEndpoint", "description": "Cosmos DB account endpoint URL" },
+      { "name": "AZURE_COSMOS_DATABASE", "bicepValue": "cosmosDb.outputs.cosmosDatabaseName", "description": "Database name" },
+      { "name": "AZURE_COSMOS_CONTAINER", "bicepValue": "'items'", "description": "Container name" }
+    ],
+    "bicepWiring": {
+      "roleAssignmentResource": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+      "apiVersion": "2024-05-15",
+      "example": "resource cosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {\n  parent: cosmosAccount\n  name: guid(cosmosAccount.id, principalId, cosmosDataContributorRoleId)\n  properties: {\n    roleDefinitionId: '${cosmosAccount.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'\n    principalId: managedIdentity.properties.principalId\n    scope: cosmosAccount.id\n  }\n}"
+    },
+    "sdkInitPattern": {
+      "python": "from azure.cosmos.aio import CosmosClient\nfrom azure.identity.aio import DefaultAzureCredential\n\ncredential = DefaultAzureCredential()\nclient = CosmosClient(url=os.environ['AZURE_COSMOS_ENDPOINT'], credential=credential)\ndb = client.get_database_client(os.environ['AZURE_COSMOS_DATABASE'])\ncontainer = db.get_container_client(os.environ['AZURE_COSMOS_CONTAINER'])",
+      "typescript": "import { CosmosClient } from '@azure/cosmos';\nimport { DefaultAzureCredential } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential();\nconst client = new CosmosClient({ endpoint: process.env.AZURE_COSMOS_ENDPOINT!, aadCredentials: credential });\nconst db = client.database(process.env.AZURE_COSMOS_DATABASE!);\nconst container = db.container(process.env.AZURE_COSMOS_CONTAINER!);"
+    },
+    "healthCheck": {
+      "python": "await client.read()",
+      "description": "Validate connectivity by reading account metadata"
+    }
   }
 }

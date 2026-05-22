@@ -1,0 +1,50 @@
+{
+  "name": "event-grid",
+  "displayName": "Azure Event Grid",
+  "category": "messaging",
+  "description": "Event routing service for reactive event-driven architectures",
+  "bicep": {
+    "modulePath": "modules/event-grid.bicep",
+    "parameters": ["topicName", "subscriptionName", "endpointUrl"],
+    "outputs": ["topicEndpoint", "topicName"]
+  },
+  "environmentVariables": [
+    "AZURE_EVENT_GRID_TOPIC_ENDPOINT"
+  ],
+  "dependencies": {
+    "python": ["azure-eventgrid>=4.20.0", "azure-identity>=1.17.0"],
+    "typescript": ["@azure/eventgrid", "@azure/identity"]
+  },
+  "roleAssignments": [
+    {
+      "role": "EventGrid Data Sender",
+      "roleDefinitionId": "d5a91429-5739-47e2-a06b-3470a27159e7"
+    }
+  ],
+  "defaultConfig": {
+    "note": "Pay per event — first 100K events/month free, then $0.60/million. Use for decoupled event-driven communication between services."
+  },
+  "integration": {
+    "authMethod": "managed-identity",
+    "authNote": "Use DefaultAzureCredential with EventGrid Data Sender role. Topic endpoint URL is all you need — no access keys.",
+    "appSettings": [
+      { "name": "AZURE_EVENT_GRID_TOPIC_ENDPOINT", "bicepValue": "eventGrid.outputs.topicEndpoint", "description": "Custom topic endpoint URL" }
+    ],
+    "bicepWiring": {
+      "topic": "resource eventGridTopic 'Microsoft.EventGrid/topics@2024-06-01-preview' = {\n  name: topicName\n  location: location\n  properties: {\n    inputSchema: 'CloudEventSchemaV1_0'\n    disableLocalAuth: true\n  }\n  identity: { type: 'SystemAssigned' }\n}",
+      "subscription": "resource eventSubscription 'Microsoft.EventGrid/topics/eventSubscriptions@2024-06-01-preview' = {\n  parent: eventGridTopic\n  name: subscriptionName\n  properties: {\n    destination: {\n      endpointType: 'WebHook'\n      properties: { endpointUrl: endpointUrl }\n    }\n    filter: { enableAdvancedFilteringOnArrays: true }\n    eventDeliverySchema: 'CloudEventSchemaV1_0'\n  }\n}"
+    },
+    "sdkInitPattern": {
+      "python": "from azure.eventgrid import EventGridPublisherClient\nfrom azure.core.messaging import CloudEvent\nfrom azure.identity import DefaultAzureCredential\n\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))\nclient = EventGridPublisherClient(\n    endpoint=os.environ['AZURE_EVENT_GRID_TOPIC_ENDPOINT'],\n    credential=credential\n)\n\nevent = CloudEvent(\n    type='com.myapp.order.created',\n    source='/orders',\n    data={'orderId': '123', 'amount': 99.99}\n)\nclient.send([event])",
+      "typescript": "import { EventGridPublisherClient } from '@azure/eventgrid';\nimport { DefaultAzureCredential } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential();\nconst client = new EventGridPublisherClient(\n  process.env.AZURE_EVENT_GRID_TOPIC_ENDPOINT!,\n  'CloudEvent',\n  credential\n);\n\nawait client.send([{\n  type: 'com.myapp.order.created',\n  source: '/orders',\n  data: { orderId: '123', amount: 99.99 }\n}]);"
+    },
+    "healthCheck": {
+      "python": "# No lightweight health check — Event Grid validates on first publish",
+      "description": "Publish a test event with type 'com.myapp.health.check'"
+    },
+    "receiverPattern": {
+      "note": "Event Grid pushes events to subscribers (webhooks, Functions, Service Bus). The receiver side is typically an HTTP endpoint that validates the subscription handshake.",
+      "webhookValidation": "# CloudEvents spec — respond to OPTIONS with WebHook-Allowed-Origin header\n@app.options('/events')\ndef validate_webhook():\n    origin = request.headers.get('WebHook-Request-Origin')\n    return '', 200, {'WebHook-Allowed-Origin': origin}"
+    }
+  }
+}

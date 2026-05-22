@@ -34,5 +34,25 @@
     "queues": ["default"],
     "tables": ["default"],
     "note": "AI Foundry requires all four service types. For simple blob-only scenarios, omit files/queues/tables."
+  },
+  "integration": {
+    "authMethod": "managed-identity",
+    "authNote": "Use DefaultAzureCredential with Storage Blob Data Contributor role. No connection strings or access keys needed.",
+    "appSettings": [
+      { "name": "AZURE_STORAGE_ACCOUNT", "bicepValue": "storage.outputs.storageAccountName", "description": "Storage account name" },
+      { "name": "AZURE_STORAGE_BLOB_ENDPOINT", "bicepValue": "storage.outputs.primaryEndpoints.blob", "description": "Blob service endpoint (e.g., https://myaccount.blob.core.windows.net/)" }
+    ],
+    "bicepWiring": {
+      "namingConstraints": "Storage account names: 3-24 chars, lowercase letters and numbers only. Use: toLower(replace('st${resourceToken}', '-', ''))",
+      "disableKeyAccess": "properties: {\n  allowSharedKeyAccess: false\n  allowBlobPublicAccess: false\n  minimumTlsVersion: 'TLS1_2'\n  supportsHttpsTrafficOnly: true\n}"
+    },
+    "sdkInitPattern": {
+      "python": "from azure.storage.blob.aio import BlobServiceClient\nfrom azure.identity.aio import DefaultAzureCredential\n\ncredential = DefaultAzureCredential(managed_identity_client_id=os.environ.get('AZURE_CLIENT_ID'))\nblob_client = BlobServiceClient(\n    account_url=os.environ['AZURE_STORAGE_BLOB_ENDPOINT'],\n    credential=credential\n)\ncontainer = blob_client.get_container_client('documents')",
+      "typescript": "import { BlobServiceClient } from '@azure/storage-blob';\nimport { DefaultAzureCredential } from '@azure/identity';\n\nconst credential = new DefaultAzureCredential();\nconst blobClient = new BlobServiceClient(\n  process.env.AZURE_STORAGE_BLOB_ENDPOINT!,\n  credential\n);\nconst container = blobClient.getContainerClient('documents');"
+    },
+    "healthCheck": {
+      "python": "await blob_client.get_account_information()",
+      "description": "Get account info to validate connectivity and permissions"
+    }
   }
 }
